@@ -6,15 +6,12 @@ import android.graphics.*
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
-import android.widget.Button
-import android.widget.ImageView
-import android.widget.TextView
+import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import java.util.regex.Pattern
 
 class ScreenshotScannerActivity : AppCompatActivity() {
 
@@ -52,55 +49,43 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             startActivityForResult(intent, PICK_IMAGE)
         }
 
-        // 🔥 POPUP SHARE
+        // SHARE POPUP
         shareButton.setOnClickListener {
 
             val options = arrayOf("Share Masked Text", "Share Blurred Image")
 
-            val builder = AlertDialog.Builder(this)
-            builder.setTitle("Choose Sharing Option")
+            AlertDialog.Builder(this)
+                .setTitle("Choose Sharing Option")
+                .setItems(options) { _, which ->
+                    when (which) {
 
-            builder.setItems(options) { _, which ->
+                        0 -> {
+                            val intent = Intent(Intent.ACTION_SEND)
+                            intent.type = "text/plain"
+                            intent.putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Scanned using DigiSuraksha\n\n${extractedText.text}\n\n${riskLevel.text}"
+                            )
+                            startActivity(Intent.createChooser(intent, "Secure Share"))
+                        }
 
-                when (which) {
+                        1 -> {
+                            blurredBitmap?.let {
+                                val path = MediaStore.Images.Media.insertImage(
+                                    contentResolver, it, "DigiSuraksha_Blurred", null
+                                )
+                                val uri = Uri.parse(path)
 
-                    0 -> {
-                        val shareIntent = Intent(Intent.ACTION_SEND)
-                        shareIntent.type = "text/plain"
+                                val intent = Intent(Intent.ACTION_SEND)
+                                intent.type = "image/*"
+                                intent.putExtra(Intent.EXTRA_STREAM, uri)
+                                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 
-                        val message =
-                            "Scanned using DigiSuraksha\n\n" +
-                                    extractedText.text.toString() +
-                                    "\n\n" +
-                                    riskLevel.text.toString()
-
-                        shareIntent.putExtra(Intent.EXTRA_TEXT, message)
-                        startActivity(Intent.createChooser(shareIntent, "Secure Share"))
+                                startActivity(Intent.createChooser(intent, "Share Blurred Image"))
+                            }
+                        }
                     }
-
-                    1 -> {
-                        if (blurredBitmap == null) return@setItems
-
-                        val path = MediaStore.Images.Media.insertImage(
-                            contentResolver,
-                            blurredBitmap,
-                            "DigiSuraksha_Blurred",
-                            null
-                        )
-
-                        val uri = Uri.parse(path)
-
-                        val intent = Intent(Intent.ACTION_SEND)
-                        intent.type = "image/*"
-                        intent.putExtra(Intent.EXTRA_STREAM, uri)
-                        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-
-                        startActivity(Intent.createChooser(intent, "Share Blurred Image"))
-                    }
-                }
-            }
-
-            builder.show()
+                }.show()
         }
     }
 
@@ -109,188 +94,155 @@ class ScreenshotScannerActivity : AppCompatActivity() {
 
         if (requestCode == PICK_IMAGE && resultCode == Activity.RESULT_OK) {
 
-            val imageUri: Uri? = data?.data
+            val imageUri = data?.data ?: return
 
-            if (imageUri != null) {
+            val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, imageUri)
+            val image = InputImage.fromBitmap(bitmap, 0)
 
-                val bitmap: Bitmap =
-                    MediaStore.Images.Media.getBitmap(this.contentResolver, imageUri)
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-                val image = InputImage.fromBitmap(bitmap, 0)
+            recognizer.process(image)
+                .addOnSuccessListener { visionText ->
 
-                val recognizer =
-                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    val resultText = visionText.text
+                    val lowerText = resultText.lowercase()
 
-                recognizer.process(image)
-                    .addOnSuccessListener { visionText ->
+                    // ================= FRAUD (FIXED) =================
+                    val hasReward =
+                        lowerText.contains("won") ||
+                                lowerText.contains("prize") ||
+                                lowerText.contains("lottery")
 
-                        val resultText = visionText.text
+                    val hasAction =
+                        lowerText.contains("click") ||
+                                lowerText.contains("claim") ||
+                                lowerText.contains("urgent")
 
-                        // ===== FRAUD =====
-                        val lowerText = resultText.lowercase()
+                    val isFraud = hasReward && hasAction
 
-                        if (
-                            lowerText.contains("win") ||
-                            lowerText.contains("prize") ||
-                            lowerText.contains("lottery") ||
-                            lowerText.contains("click") ||
-                            lowerText.contains("urgent") ||
-                            lowerText.contains("free") ||
-                            lowerText.contains("offer")
-                        ) {
-                            fraudWarning.text = "⚠ Possible Fraud Detected"
-                            fraudWarning.setTextColor(getColor(android.R.color.holo_red_dark))
-                        } else {
-                            fraudWarning.text = ""
-                        }
+                    if (isFraud) {
+                        fraudWarning.text = "⚠ Possible Fraud Detected"
+                        fraudWarning.setTextColor(getColor(android.R.color.holo_red_dark))
+                    } else {
+                        fraudWarning.text = ""
+                    }
 
-                        // ===== BLUR =====
-                        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                        val canvas = Canvas(mutableBitmap)
-                        val paint = Paint()
+                    // ================= BLUR (RELAXED) =================
+                    val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                    val canvas = Canvas(mutableBitmap)
+                    val paint = Paint()
 
-                        for (block in visionText.textBlocks) {
-                            for (line in block.lines) {
-                                for (element in line.elements) {
+                    for (block in visionText.textBlocks) {
+                        for (line in block.lines) {
+                            for (element in line.elements) {
 
-                                    val text = element.text
-                                    val box = element.boundingBox
+                                val text = element.text
+                                val box = element.boundingBox ?: continue
 
-                                    if (box != null) {
+                                val isBlurSensitive =
+                                    Regex("\\b\\d{4,6}\\b").containsMatchIn(text) ||
+                                            Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(text) ||
+                                            Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+").containsMatchIn(text) ||
+                                            Regex("\\b[\\w.-]+@[\\w.-]+\\b").containsMatchIn(text)
 
-                                        val isSensitive =
-                                            Regex("(\\d\\s*){4,6}").containsMatchIn(text) ||
-                                                    Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(text) ||
-                                                    Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+").containsMatchIn(text) ||
-                                                    Regex("\\b[\\w.-]+@[\\w.-]+\\b").containsMatchIn(text)
+                                if (isBlurSensitive) {
 
-                                        if (isSensitive) {
+                                    val cropped = Bitmap.createBitmap(
+                                        mutableBitmap,
+                                        box.left.coerceAtLeast(0),
+                                        box.top.coerceAtLeast(0),
+                                        box.width().coerceAtMost(mutableBitmap.width - box.left),
+                                        box.height().coerceAtMost(mutableBitmap.height - box.top)
+                                    )
 
-                                            val left = box.left.coerceAtLeast(0)
-                                            val top = box.top.coerceAtLeast(0)
-                                            val width = box.width().coerceAtMost(mutableBitmap.width - left)
-                                            val height = box.height().coerceAtMost(mutableBitmap.height - top)
+                                    val blurred = blurBitmap(cropped)
 
-                                            if (width > 0 && height > 0) {
-
-                                                val cropped = Bitmap.createBitmap(
-                                                    mutableBitmap,
-                                                    left,
-                                                    top,
-                                                    width,
-                                                    height
-                                                )
-
-                                                val blurred = blurBitmap(cropped)
-
-                                                canvas.drawBitmap(
-                                                    blurred,
-                                                    left.toFloat(),
-                                                    top.toFloat(),
-                                                    paint
-                                                )
-                                            }
-                                        }
-                                    }
+                                    canvas.drawBitmap(
+                                        blurred,
+                                        box.left.toFloat(),
+                                        box.top.toFloat(),
+                                        paint
+                                    )
                                 }
                             }
                         }
-
-                        imageView.setImageBitmap(mutableBitmap)
-                        blurredBitmap = mutableBitmap
-
-                        // ===== MASK TEXT =====
-                        var maskedText = resultText
-
-                        maskedText = maskedText.replace(Regex("(\\d\\s*){4,6}"), "******")
-                        maskedText = maskedText.replace(Regex("\\b[6-9][0-9]{9}\\b"), "*****#####")
-                        maskedText = maskedText.replace(Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+"), "hidden@email")
-                        maskedText = maskedText.replace(Regex("\\b[\\w.-]+@[\\w.-]+\\b"), "hidden@upi")
-
-                        extractedText.text = maskedText
-
-                        // ===== RISK =====
-                        val phonePattern = Pattern.compile("\\b[6-9][0-9]{9}\\b")
-                        val otpPattern = Pattern.compile("(\\d\\s*){4,6}")
-                        val upiPattern = Pattern.compile("\\b[\\w.-]+@[\\w.-]+\\b")
-                        val emailPattern =
-                            Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+")
-
-                        var risk = "LOW"
-
-                        if (phonePattern.matcher(resultText).find()) risk = "MEDIUM"
-                        if (emailPattern.matcher(resultText).find()) risk = "MEDIUM"
-                        if (otpPattern.matcher(resultText).find() ||
-                            upiPattern.matcher(resultText).find()
-                        ) risk = "HIGH"
-
-                        riskLevel.text = "Risk Level: $risk"
-
-                        when (risk) {
-                            "HIGH" -> riskLevel.setTextColor(getColor(android.R.color.holo_red_dark))
-                            "MEDIUM" -> riskLevel.setTextColor(getColor(android.R.color.holo_orange_dark))
-                            "LOW" -> riskLevel.setTextColor(getColor(android.R.color.holo_green_dark))
-                        }
-
-                        // ===== EXPLANATION + TIPS =====
-                        val explanation = generateExplanation(resultText)
-                        val tips = generateSafetyTips(resultText)
-
-                        if (risk == "HIGH") {
-                            explanationText.text = explanation
-                            tipsText.text = tips
-                        } else if (risk == "MEDIUM") {
-                            explanationText.text = explanation
-                            tipsText.text = ""
-                        } else {
-                            explanationText.text = "No major threats detected."
-                            tipsText.text = ""
-                        }
                     }
 
-                    .addOnFailureListener {
-                        extractedText.text = "Failed to detect text"
+                    imageView.setImageBitmap(mutableBitmap)
+                    blurredBitmap = mutableBitmap
+
+                    // ================= MASK =================
+                    var maskedText = resultText
+                    maskedText = maskedText.replace(Regex("\\b\\d{4,6}\\b"), "******")
+                    maskedText = maskedText.replace(Regex("\\b[6-9][0-9]{9}\\b"), "*****#####")
+                    maskedText = maskedText.replace(Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+"), "hidden@email")
+                    maskedText = maskedText.replace(Regex("\\b[\\w.-]+@[\\w.-]+\\b"), "hidden@upi")
+
+                    extractedText.text = maskedText
+
+                    // ================= RISK =================
+                    var risk = "LOW"
+
+                    if (Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(resultText)) {
+                        risk = "MEDIUM"
                     }
-            }
+
+                    val isOtp =
+                        Regex("\\b\\d{4,6}\\b").containsMatchIn(resultText) &&
+                                (lowerText.contains("otp") ||
+                                        lowerText.contains("code") ||
+                                        lowerText.contains("verification"))
+
+                    if (isOtp) risk = "HIGH"
+
+                    riskLevel.text = "Risk Level: $risk"
+
+                    when (risk) {
+                        "HIGH" -> riskLevel.setTextColor(getColor(android.R.color.holo_red_dark))
+                        "MEDIUM" -> riskLevel.setTextColor(getColor(android.R.color.holo_orange_dark))
+                        "LOW" -> riskLevel.setTextColor(getColor(android.R.color.holo_green_dark))
+                    }
+
+                    explanationText.text = generateExplanation(resultText)
+                    tipsText.text = generateSafetyTips(resultText)
+                }
         }
     }
 
     private fun blurBitmap(bitmap: Bitmap): Bitmap {
-        val scale = 0.1f
-        val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
-        val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
-
-        val blurred = Bitmap.createScaledBitmap(bitmap, width, height, true)
-        return Bitmap.createScaledBitmap(blurred, bitmap.width, bitmap.height, true)
+        val small = Bitmap.createScaledBitmap(bitmap, 20, 20, true)
+        return Bitmap.createScaledBitmap(small, bitmap.width, bitmap.height, true)
     }
 
     private fun generateExplanation(text: String): String {
+        val lower = text.lowercase()
         val reasons = mutableListOf<String>()
 
-        if (Regex("(\\d\\s*){4,6}").containsMatchIn(text)) reasons.add("Contains OTP")
+        val isOtp =
+            Regex("\\b\\d{4,6}\\b").containsMatchIn(text) &&
+                    (lower.contains("otp") || lower.contains("code") || lower.contains("verification"))
+
+        if (isOtp) reasons.add("Contains OTP")
         if (Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(text)) reasons.add("Contains Phone Number")
         if (Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+").containsMatchIn(text)) reasons.add("Contains Email")
         if (Regex("\\b[\\w.-]+@[\\w.-]+\\b").containsMatchIn(text)) reasons.add("Contains UPI ID")
 
-        return if (reasons.isNotEmpty()) {
-            "⚠ This may be unsafe to share because:\n\n• " + reasons.joinToString("\n• ")
-        } else {
-            ""
-        }
+        return if (reasons.isNotEmpty())
+            "⚠ This may be unsafe to share because:\n\n• ${reasons.joinToString("\n• ")}"
+        else
+            "No major threats detected."
     }
 
     private fun generateSafetyTips(text: String): String {
+        val lower = text.lowercase()
         val tips = mutableListOf<String>()
 
-        if (Regex("(\\d\\s*){4,6}").containsMatchIn(text)) tips.add("Never share OTP with anyone.")
-        if (Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(text)) tips.add("Avoid sharing your phone number.")
-        if (Regex("\\b[\\w.-]+@[\\w.-]+\\b").containsMatchIn(text)) tips.add("Verify UPI IDs before sending money.")
-        if (Regex("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+").containsMatchIn(text)) tips.add("Be careful sharing email.")
+        if (lower.contains("otp")) tips.add("Never share OTP.")
+        if (Regex("\\b[6-9][0-9]{9}\\b").containsMatchIn(text)) tips.add("Avoid sharing phone number.")
+        if (lower.contains("@")) tips.add("Verify UPI/email before sharing.")
 
-        return if (tips.isNotEmpty()) {
-            "🛡 Safety Tips:\n\n• " + tips.joinToString("\n• ")
-        } else {
-            ""
-        }
+        return if (tips.isNotEmpty())
+            "🛡 Safety Tips:\n\n• ${tips.joinToString("\n• ")}"
+        else ""
     }
 }
