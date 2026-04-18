@@ -2,6 +2,7 @@ package com.example.digisuraksha
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.*
 import android.net.Uri
 import android.os.Bundle
@@ -17,6 +18,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 class ScreenshotScannerActivity : AppCompatActivity() {
 
     private val PICK_IMAGE = 100
+    private val SMS_PERMISSION_CODE = 101
 
     private lateinit var imageView: ImageView
     private lateinit var extractedText: TextView
@@ -41,6 +43,19 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         shareButton = findViewById(R.id.shareSecure)
         explanationText = findViewById(R.id.explanationText)
         tipsText = findViewById(R.id.tipsText)
+
+        // 🔥 STEP 5: ASK SMS PERMISSION
+        if (checkSelfPermission(android.Manifest.permission.RECEIVE_SMS)
+            != PackageManager.PERMISSION_GRANTED) {
+
+            requestPermissions(
+                arrayOf(
+                    android.Manifest.permission.RECEIVE_SMS,
+                    android.Manifest.permission.READ_SMS
+                ),
+                SMS_PERMISSION_CODE
+            )
+        }
 
         selectButton.setOnClickListener {
             val intent = Intent(Intent.ACTION_PICK)
@@ -87,6 +102,22 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == SMS_PERMISSION_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "SMS Permission Granted", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "SMS Permission Denied", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
@@ -112,14 +143,12 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     val resultText = visionText.text
                     val lowerText = resultText.lowercase()
 
-                    // ===== FRAUD =====
                     val isFraud =
                         (lowerText.contains("won") || lowerText.contains("prize") || lowerText.contains("lottery")) &&
                                 (lowerText.contains("click") || lowerText.contains("claim") || lowerText.contains("urgent"))
 
                     fraudWarning.text = if (isFraud) "⚠ Possible Fraud Detected" else ""
 
-                    // ===== TEXT BLUR =====
                     for (block in visionText.textBlocks) {
                         for (line in block.lines) {
                             for (element in line.elements) {
@@ -140,7 +169,6 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                         }
                     }
 
-                    // ===== QR BLUR =====
                     barcodeScanner.process(image)
                         .addOnSuccessListener { barcodes ->
                             for (barcode in barcodes ?: emptyList()) {
@@ -152,7 +180,6 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                             blurredBitmap = mutableBitmap
                         }
 
-                    // ===== MASK =====
                     var maskedText = resultText
                     maskedText = maskedText.replace(phoneRegex, "*****#####")
                     maskedText = maskedText.replace(emailRegex, "hidden@email")
@@ -161,7 +188,6 @@ class ScreenshotScannerActivity : AppCompatActivity() {
 
                     extractedText.text = maskedText
 
-                    // ===== RISK =====
                     val isOtp =
                         Regex("\\b\\d{4,6}\\b").containsMatchIn(resultText) &&
                                 (lowerText.contains("otp") || lowerText.contains("code"))
@@ -192,7 +218,6 @@ class ScreenshotScannerActivity : AppCompatActivity() {
 
     private fun blurRegion(canvas: Canvas, bitmap: Bitmap, box: Rect) {
         val padding = 20
-
         val left = (box.left - padding).coerceAtLeast(0)
         val top = (box.top - padding).coerceAtLeast(0)
         val right = (box.right + padding).coerceAtMost(bitmap.width)
