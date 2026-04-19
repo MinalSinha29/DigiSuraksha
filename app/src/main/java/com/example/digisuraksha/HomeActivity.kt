@@ -17,18 +17,20 @@ class HomeActivity : AppCompatActivity() {
 
         // 📸 Screenshot Scanner Card
         val scanCard = findViewById<LinearLayout>(R.id.scanCard)
-
         scanCard.setOnClickListener {
-            val intent = Intent(this, ScreenshotScannerActivity::class.java)
-            startActivity(intent)
+            startActivity(Intent(this, ScreenshotScannerActivity::class.java))
         }
 
         // 📩 SMS Analyzer Card
         val smsCard = findViewById<LinearLayout>(R.id.smsCard)
-
         smsCard.setOnClickListener {
-            val intent = Intent(this, SmsAnalyzerActivity::class.java)
-            startActivity(intent)
+            startActivity(Intent(this, SmsAnalyzerActivity::class.java))
+        }
+
+        // 📜 Logs Card (NEW 🔥)
+        val logsCard = findViewById<LinearLayout>(R.id.logsCard)
+        logsCard.setOnClickListener {
+            startActivity(Intent(this, LogsActivity::class.java))
         }
 
         // UI Insets (keep this same)

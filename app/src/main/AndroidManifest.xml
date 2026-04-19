@@ -14,10 +14,33 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DigiSuraksha">
+
+        <!-- ✅ FIXED: Only ONE LogsActivity -->
+        <activity
+            android:name=".LogsActivity"
+            android:exported="false" />
+
         <activity
             android:name=".SmsAnalyzerActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".SecureShareActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".RiskResultActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ScreenshotScannerActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".HomeActivity"
+            android:exported="false" />
+
+        <!-- SMS Receiver -->
         <receiver
             android:name=".SmsReceiver"
             android:exported="true"
@@ -25,30 +48,22 @@
             <intent-filter>
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
-        </receiver> <!-- Activities -->
-        <activity
-            android:name=".SecureShareActivity"
-            android:exported="false" />
-        <activity
-            android:name=".RiskResultActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ScreenshotScannerActivity"
-            android:exported="false" />
-        <activity
-            android:name=".HomeActivity"
-            android:exported="false" />
+        </receiver>
+
+        <!-- Main Launcher -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.DigiSuraksha">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
+
     </application>
 
 </manifest>

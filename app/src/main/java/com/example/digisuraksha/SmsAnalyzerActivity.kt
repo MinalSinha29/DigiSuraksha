@@ -65,6 +65,9 @@ class SmsAnalyzerActivity : AppCompatActivity() {
                 else -> "LOW"
             }
 
+            // ✅ ONLY ONE CLEAN LOG
+            logEvent("SMS → $risk → Analyzed")
+
             riskLevel.text = "Risk Level: $risk"
 
             when (risk) {
@@ -105,5 +108,19 @@ class SmsAnalyzerActivity : AppCompatActivity() {
                     "🛡 Safety Tips:\n\n• " + tips.joinToString("\n• ")
                 else ""
         }
+    }
+
+    // 🔥 LOGGING FUNCTION
+    private fun logEvent(event: String) {
+        val prefs = getSharedPreferences("logs", MODE_PRIVATE)
+        val oldLogs = prefs.getString("data", "") ?: ""
+        val newLog = oldLogs + "\n" + getCurrentTime() + " : " + event
+        prefs.edit().putString("data", newLog).apply()
+    }
+
+    // 🔥 TIME FUNCTION
+    private fun getCurrentTime(): String {
+        val sdf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        return sdf.format(java.util.Date())
     }
 }
