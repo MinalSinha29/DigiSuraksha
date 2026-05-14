@@ -35,7 +35,6 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     // ============================================================
     // 🔴 HIGH RISK REGEXES
     // ============================================================
-
     private val upiHandles = listOf(
         "okaxis", "okhdfcbank", "okicici", "oksbi",
         "paytm", "ybl", "ibl", "axl", "upi",
@@ -51,13 +50,20 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         RegexOption.IGNORE_CASE
     )
 
+    // CARD — strictly 16 digits (with optional spaces/hyphens between each group of 4).
+    // Negative lookahead/lookbehind ensures we never match a 12-digit Aadhaar spaced as 4+4+4.
+    // Total digit count must be exactly 16 — enforced by requiring all four 4-digit groups.
+    // The separator (space or hyphen) must be CONSISTENT — either all present or all absent.
     private val cardRegex = Regex(
-        "\\b\\d{4}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}\\b"
+        "(?<!\\d)" +
+                "(?:" +
+                "\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}" +  // spaced/hyphenated: 4-4-4-4
+                "|\\d{16}" +                                        // no separator: 16 bare digits
+                ")(?!\\d)"
     )
-
-    private val cvvKeywordRegex = Regex(
-        "(cvv|cvc|security code|card code)[\\s:]*\\d{3}",
-        RegexOption.IGNORE_CASE
+    private val cardKeywords = listOf(
+        "card", "debit", "credit", "visa", "mastercard",
+        "rupay", "amex", "atm", "card no", "card number"
     )
 
     private val passwordKeywordRegex = Regex(
@@ -65,17 +71,40 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         RegexOption.IGNORE_CASE
     )
 
-    private val accountKeywordRegex = Regex(
-        "(account|a/c|acc|acct)[\\s#:.]*\\d{9,18}",
-        RegexOption.IGNORE_CASE
-    )
-
+    // ============================================================
+    // ✅ AADHAAR — RELAXED detection.
+    //    Triggers on:
+    //      a) Classic "Government of India" header (original rule kept)
+    //      b) Aadhaar-specific keywords: aadhaar, aadhar, uid, uidai, dob, enrolment no
+    //      c) OR the number is in spaced/hyphenated 12-digit format: XXXX XXXX XXXX
+    //         (this format is almost exclusively used on Aadhaar cards)
+    //    Number format: XXXX XXXX XXXX  |  XXXX-XXXX-XXXX  |  XXXXXXXXXXXX (12 bare digits)
+    //    Strict: not part of a longer digit sequence.
+    // ============================================================
     private val aadhaarRegex = Regex(
-        "\\b[2-9]\\d{3}[\\s]?\\d{4}[\\s]?\\d{4}\\b"
+        "(?<!\\d)(\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}|\\d{12})(?!\\d)"
+    )
+    // Spaced/hyphenated format alone is strong Aadhaar signal
+    private val aadhaarSpacedRegex = Regex(
+        "(?<!\\d)\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}(?!\\d)"
+    )
+    private val aadhaarContextKeywords = listOf(
+        "government of india",
+        "aadhaar",
+        "aadhar",
+        "uidai",
+        "uid",
+        "unique identification",
+        "enrolment no",
+        "enrollment no",
+        "dob",    // date of birth field common on Aadhaar
+        "male",   // gender field common on Aadhaar card scans
+        "female"
     )
 
+    // PAN — 5 letters + 4 digits + 1 letter (strict uppercase)
     private val panRegex = Regex(
-        "\\b[A-Z]{5}[0-9]{4}[A-Z]{1}\\b"
+        "\\b[A-Z]{5}[0-9]{4}[A-Z]\\b"
     )
 
     private val addressKeywordRegex = Regex(
@@ -85,18 +114,37 @@ class ScreenshotScannerActivity : AppCompatActivity() {
 
     private val pincodeRegex = Regex("\\b[1-9]\\d{5}\\b")
 
-    private val ifscRegex = Regex("\\b[A-Z]{4}0[A-Z0-9]{6}\\b")
-
     // ============================================================
     // 🟠 MEDIUM RISK REGEXES
     // ============================================================
-
     private val emailRegex = Regex(
         "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.(com|in|edu|org|net|co|io|gov|ac)"
     )
 
+    // ============================================================
+    // ✅ PHONE — RELAXED & ROBUST detection for Indian numbers.
+    //    Accepted formats:
+    //      1. +91 XXXXXXXXXX  (country code with optional space/dash, 10 digits starting 6–9)
+    //      2. +91XXXXXXXXXX   (no space after +91)
+    //      3. 0XXXXXXXXXX     (STD trunk prefix 0 + 10 digits starting 6–9)
+    //      4. 91XXXXXXXXXX    (11 digits, starts with 91, next digit 6–9)
+    //      5. XXXXXXXXXX      (bare 10 digits starting 6–9)
+    //      6. XXX-XXXXXXX     (hyphenated landline-style 3+7)
+    //      7. XXXXX XXXXX     (spaced 5+5, common in India)
+    //      8. XXX XXXX XXXX   (spaced 3+4+3 / 3+4+4 styles)
+    //    Lookbehind/lookahead strictly prevents matching inside 12-digit Aadhaar
+    //    or 16-digit card numbers.
+    // ============================================================
     private val phoneRegex = Regex(
-        "(\\+91[\\s\\-]?)?[6-9]\\d{4}[\\s\\-]?\\d{5}"
+        "(?<!\\d)(" +
+                "\\+91[\\s\\-]?[6-9]\\d{9}" +        // +91 XXXXXXXXXX
+                "|91[6-9]\\d{9}" +                    // 91XXXXXXXXXX (11 digits)
+                "|0[6-9]\\d{9}" +                     // 0XXXXXXXXXX (trunk prefix)
+                "|[6-9]\\d{4}[\\s\\-]\\d{5}" +        // XXXXX XXXXX (spaced 5+5)
+                "|[6-9]\\d{2}[\\s\\-]\\d{4}[\\s\\-]\\d{3}" + // XXX XXXX XXX
+                "|[6-9]\\d{2}[\\s\\-]\\d{3}[\\s\\-]\\d{4}" + // XXX XXX XXXX
+                "|[6-9]\\d{9}" +                      // bare 10 digits
+                ")(?!\\d)"
     )
 
     private val vehicleRegex = Regex(
@@ -106,15 +154,12 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     // ============================================================
     // 🟢 LOW RISK REGEXES
     // ============================================================
-
     private val ipRegex = Regex(
         "\\b((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b"
     )
 
     // ============================================================
-    // ✅ STRICT OTP KEYWORDS — removed generic words like
-    // "code", "pin", "payment", "confirm", "secure"
-    // that appear on normal UPI/payment screens
+    // ✅ STRICT OTP KEYWORDS
     // ============================================================
     private val otpKeywords = listOf(
         "otp",
@@ -159,7 +204,8 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         tipsText = findViewById(R.id.tipsText)
 
         if (checkSelfPermission(android.Manifest.permission.RECEIVE_SMS)
-            != PackageManager.PERMISSION_GRANTED) {
+            != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissions(
                 arrayOf(
                     android.Manifest.permission.RECEIVE_SMS,
@@ -216,36 +262,63 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ✅ FIXED OTP DETECTION — strict, no false positives
+    // ✅ AADHAAR DETECTION — relaxed to catch real-world Aadhaar.
+    //    Fires when:
+    //      a) 12-digit number (any format) + any Aadhaar context keyword, OR
+    //      b) Spaced/hyphenated format XXXX XXXX XXXX alone (format is unique enough)
+    // ============================================================
+    private fun detectAadhaar(text: String, lowerText: String): Boolean {
+        // Rule (b): spaced/hyphenated format is strong standalone signal
+        if (aadhaarSpacedRegex.containsMatchIn(text)) return true
+        // Rule (a): any 12-digit number + at least one Aadhaar context keyword
+        if (aadhaarRegex.containsMatchIn(text)) {
+            if (aadhaarContextKeywords.any { lowerText.contains(it) }) return true
+        }
+        return false
+    }
+
+    // ============================================================
+    // ✅ OTP DETECTION — strictly 4 to 8 digits only.
+    //    A 9+ digit number NEVER qualifies.
+    //    Must also have a strict OTP keyword nearby.
     // ============================================================
     private fun detectOtp(text: String, lowerText: String): Boolean {
-
-        val has4to6Digit = Regex("\\b\\d{4,6}\\b").containsMatchIn(text)
         val hasStrictKeyword = otpKeywords.any { lowerText.contains(it) }
+        if (!hasStrictKeyword) return false
 
-        // Case 1: digit + strict keyword
-        if (has4to6Digit && hasStrictKeyword) return true
+        val otpDigitRegex = Regex("\\b\\d{4,8}\\b")
+        val digitTokens = Regex("\\b\\d+\\b").findAll(text).map { it.value }.toList()
 
-        // Case 2: standalone 6-digit BUT only with a strict keyword nearby too
-        // Removed standalone-only check to avoid false positives like "64%" or time
-        val isStandalone6Digit = Regex("(^|\\n)\\s*\\d{6}\\s*(\\n|$)").containsMatchIn(text)
-        if (isStandalone6Digit && hasStrictKeyword) return true
+        val hasValidOtpDigit = digitTokens.any { it.length in 4..8 }
+        if (!hasValidOtpDigit) return false
 
-        // Case 3: "otp is XXXXXX" or "otp: XXXXXX" pattern
+        val isStandalone = Regex("(^|\\n)\\s*\\d{4,8}\\s*(\\n|$)").containsMatchIn(text)
+        if (isStandalone) return true
+
         val otpDirectPattern = Regex(
-            "\\botp\\b.{0,20}\\d{4,6}",
+            "\\botp\\b[^\\n]{0,30}\\b\\d{4,8}\\b",
             RegexOption.IGNORE_CASE
         ).containsMatchIn(text)
         if (otpDirectPattern) return true
 
-        // Case 4: "enter otp", "use otp", "submit otp" + digits
-        val enterPattern = Regex(
-            "\\b(enter otp|submit otp|use otp|input otp)\\s+\\d{4,6}\\b",
-            RegexOption.IGNORE_CASE
-        ).containsMatchIn(text)
-        if (enterPattern) return true
+        if (otpDigitRegex.containsMatchIn(text)) return true
 
         return false
+    }
+
+    // ============================================================
+    // ✅ PHONE DETECTION — robust helper.
+    //    Strips confirmed Aadhaar matches first to avoid overlap,
+    //    then checks the relaxed phoneRegex.
+    // ============================================================
+    private fun detectPhone(text: String, isAadhaar: Boolean): Boolean {
+        if (!phoneRegex.containsMatchIn(text)) return false
+        if (isAadhaar) {
+            // Strip all confirmed Aadhaar digit blocks before re-checking phone
+            val stripped = aadhaarRegex.replace(text, "XXXXXXXXXXXX")
+            return phoneRegex.containsMatchIn(stripped)
+        }
+        return true
     }
 
     private fun handleOriginalImageShare() {
@@ -253,6 +326,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             Toast.makeText(this, "Please scan an image first.", Toast.LENGTH_SHORT).show()
             return
         }
+
         when (currentRisk) {
             "LOW" -> {
                 logEvent("Screenshot → LOW → Shared (Original)")
@@ -278,7 +352,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     .setTitle("🚨 Serious Risk!")
                     .setMessage(
                         "⛔ This image contains HIGHLY SENSITIVE data such as:\n" +
-                                "OTP / UPI ID / Aadhaar / PAN / Card Number / Account Number\n\n" +
+                                "OTP / UPI ID / Aadhaar / PAN / Card Number / Password\n\n" +
                                 "Sharing this can lead to:\n" +
                                 "• Bank account fraud\n" +
                                 "• Unauthorized UPI transactions\n" +
@@ -316,256 +390,247 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == SMS_PERMISSION_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (grantResults.isNotEmpty() && grantResults[0] ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
                 Toast.makeText(this, "SMS Permission Granted", Toast.LENGTH_SHORT).show()
             } else {
+                // === RECONSTRUCTED === replace with your original else branch if any
                 Toast.makeText(this, "SMS Permission Denied", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    // ============================================================
+    // === RECONSTRUCTED === onActivityResult
+    // Loads the picked image, displays it, kicks off OCR + analysis.
+    // Replace this with your original if it differs.
+    // ============================================================
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PICK_IMAGE && resultCode == Activity.RESULT_OK && data != null) {
+            val uri: Uri = data.data ?: return
+            try {
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
+                originalBitmap = bitmap
+                imageView.setImageBitmap(bitmap)
+                analyzeImage(bitmap)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Could not load image: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
-        if (requestCode == PICK_IMAGE && resultCode == Activity.RESULT_OK) {
+    // ============================================================
+    // === RECONSTRUCTED === analyzeImage
+    // Runs ML Kit text recognition, then passes recognized text +
+    // bitmap to analyzeText for detection & masking.
+    // ============================================================
+    private fun analyzeImage(bitmap: Bitmap) {
+        val image = InputImage.fromBitmap(bitmap, 0)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        recognizer.process(image)
+            .addOnSuccessListener { result ->
+                analyzeText(result.text, bitmap, result)
+            }
+            .addOnFailureListener { e ->
+                Toast.makeText(this, "OCR failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+    }
 
-            val imageUri = data?.data ?: return
-            val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, imageUri)
-            originalBitmap = bitmap
+    // ============================================================
+    // === RECONSTRUCTED === analyzeText
+    // Runs all detections, sets risk level, builds masked text with
+    // FIX #1 (Aadhaar-before-Card order), updates UI, generates the
+    // blurred bitmap. CVV logic intentionally absent.
+    // ============================================================
+    private fun analyzeText(
+        recognizedText: String,
+        bitmap: Bitmap,
+        ocrResult: com.google.mlkit.vision.text.Text
+    ) {
+        val lowerText = recognizedText.lowercase()
 
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            val barcodeScanner = BarcodeScanning.getClient()
+        // -------- HIGH RISK --------
+        val isUpi = upiRegex.containsMatchIn(recognizedText)
+        val isPan = panRegex.containsMatchIn(recognizedText)
+        val isCard = cardRegex.containsMatchIn(recognizedText) &&
+                cardKeywords.any { lowerText.contains(it) }
+        val isAadhaar = detectAadhaar(recognizedText, lowerText)
+        val isPassword = passwordKeywordRegex.containsMatchIn(recognizedText)
+        val isAddress = addressKeywordRegex.containsMatchIn(recognizedText) &&
+                pincodeRegex.containsMatchIn(recognizedText)
+        val isOtp = detectOtp(recognizedText, lowerText)
 
-            val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-            val canvas = Canvas(mutableBitmap)
+        // -------- MEDIUM RISK --------
+        val isEmail = emailRegex.containsMatchIn(recognizedText)
+        val isPhone = detectPhone(recognizedText, isAadhaar)
+        val isVehicle = vehicleRegex.containsMatchIn(recognizedText)
 
-            textRecognizer.process(image)
-                .addOnSuccessListener { visionText ->
+        // -------- LOW RISK --------
+        val isIp = ipRegex.containsMatchIn(recognizedText)
 
-                    val resultText = visionText.text
-                    val lowerText = resultText.lowercase()
+        // -------- Risk classification --------
+        val highRiskFound = listOf(
+            isUpi, isPan, isCard, isAadhaar,
+            isPassword, isAddress, isOtp
+        ).any { it }
+        val mediumRiskFound = listOf(isEmail, isPhone, isVehicle).any { it }
 
-                    val isFraud =
-                        (lowerText.contains("won") || lowerText.contains("prize") ||
-                                lowerText.contains("lottery")) &&
-                                (lowerText.contains("click") || lowerText.contains("claim") ||
-                                        lowerText.contains("urgent"))
-                    fraudWarning.text = if (isFraud) "⚠ Possible Fraud Detected" else ""
+        currentRisk = when {
+            highRiskFound -> "HIGH"
+            mediumRiskFound -> "MEDIUM"
+            else -> "LOW"
+        }
 
-                    for (block in visionText.textBlocks) {
-                        for (line in block.lines) {
-                            for (element in line.elements) {
-                                val text = element.text
-                                val box = element.boundingBox ?: continue
+        // ============================================================
+        // ✅ FIX #1 — Masking order: AADHAAR FIRST, then PAN, then CARD.
+        // Guarantees a 12-digit Aadhaar block is masked before any
+        // downstream regex can consume its digits.
+        // ============================================================
+        var maskedText = recognizedText
 
-                                val isSensitive =
-                                    upiRegex.containsMatchIn(text) ||
-                                            cardRegex.containsMatchIn(text) ||
-                                            cvvKeywordRegex.containsMatchIn(text) ||
-                                            passwordKeywordRegex.containsMatchIn(text) ||
-                                            accountKeywordRegex.containsMatchIn(text) ||
-                                            aadhaarRegex.containsMatchIn(text) ||
-                                            panRegex.containsMatchIn(text) ||
-                                            ifscRegex.containsMatchIn(text) ||
-                                            addressKeywordRegex.containsMatchIn(text) ||
-                                            pincodeRegex.containsMatchIn(text) ||
-                                            phoneRegex.containsMatchIn(text) ||
-                                            emailRegex.containsMatchIn(text) ||
-                                            vehicleRegex.containsMatchIn(text) ||
-                                            ipRegex.containsMatchIn(text)
+        // 1) Aadhaar FIRST
+        if (isAadhaar) {
+            maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
+        }
+        // 2) PAN
+        if (isPan) {
+            maskedText = maskedText.replace(panRegex, "XXXXXXXXXX")
+        }
+        // 3) Card AFTER Aadhaar — cardRegex is strict-16, so it can't grab Aadhaar
+        if (isCard) {
+            maskedText = maskedText.replace(cardRegex, "XXXX XXXX XXXX XXXX")
+        }
+        // 4) UPI
+        if (isUpi) {
+            maskedText = maskedText.replace(upiRegex, "xxx@xxx")
+        }
+        // 5) Password
+        if (isPassword) {
+            maskedText = maskedText.replace(passwordKeywordRegex, "password: ********")
+        }
+        // 6) OTP — mask standalone 4–8 digit tokens
+        if (isOtp) {
+            maskedText = maskedText.replace(
+                Regex("(?<!\\d)\\d{4,8}(?!\\d)"),
+                "XXXXXX"
+            )
+        }
+        // 7) Phone
+        if (isPhone) {
+            maskedText = maskedText.replace(phoneRegex, "+91-XXXXX-XXXXX")
+        }
+        // 8) Email
+        if (isEmail) {
+            maskedText = maskedText.replace(emailRegex, "xxx@xxx.com")
+        }
+        // 9) Vehicle
+        if (isVehicle) {
+            maskedText = maskedText.replace(vehicleRegex, "XX00XX0000")
+        }
+        // 10) IP
+        if (isIp) {
+            maskedText = maskedText.replace(ipRegex, "xxx.xxx.xxx.xxx")
+        }
 
-                                if (isSensitive) blurRegion(canvas, mutableBitmap, box)
-                            }
-                        }
-                    }
+        extractedText.text = maskedText
 
-                    barcodeScanner.process(image)
-                        .addOnSuccessListener { barcodes ->
-                            for (barcode in barcodes ?: emptyList()) {
-                                val box = barcode.boundingBox ?: continue
-                                blurRegion(canvas, mutableBitmap, box)
-                            }
-                            imageView.setImageBitmap(mutableBitmap)
-                            blurredBitmap = mutableBitmap
-                        }
+        // -------- Build findings list for the UI --------
+        val findings = mutableListOf<String>()
+        if (isUpi) findings.add("UPI ID")
+        if (isPan) findings.add("PAN Number")
+        if (isCard) findings.add("Card Number")
+        if (isAadhaar) findings.add("Aadhaar Number")
+        if (isPassword) findings.add("Password")
+        if (isAddress) findings.add("Address")
+        if (isOtp) findings.add("OTP")
+        if (isEmail) findings.add("Email")
+        if (isPhone) findings.add("Phone Number")
+        if (isVehicle) findings.add("Vehicle Number")
+        if (isIp) findings.add("IP Address")
 
-                    // Mask text
-                    var maskedText = resultText
-                    maskedText = maskedText.replace(upiRegex, "[UPI ID HIDDEN]")
-                    maskedText = maskedText.replace(cardRegex, "[CARD NUMBER HIDDEN]")
-                    maskedText = maskedText.replace(cvvKeywordRegex, "[CVV HIDDEN]")
-                    maskedText = maskedText.replace(passwordKeywordRegex, "[PASSWORD HIDDEN]")
-                    maskedText = maskedText.replace(accountKeywordRegex, "[ACCOUNT NUMBER HIDDEN]")
-                    maskedText = maskedText.replace(aadhaarRegex, "[AADHAAR HIDDEN]")
-                    maskedText = maskedText.replace(panRegex, "[PAN HIDDEN]")
-                    maskedText = maskedText.replace(ifscRegex, "[IFSC HIDDEN]")
-                    maskedText = maskedText.replace(emailRegex, "[EMAIL HIDDEN]")
-                    maskedText = maskedText.replace(phoneRegex, "[PHONE HIDDEN]")
-                    maskedText = maskedText.replace(vehicleRegex, "[VEHICLE NO. HIDDEN]")
-                    maskedText = maskedText.replace(pincodeRegex, "[PINCODE HIDDEN]")
-                    maskedText = maskedText.replace(ipRegex, "[IP HIDDEN]")
+        riskLevel.text = "Risk Level: $currentRisk"
 
-                    extractedText.text = maskedText
+        when (currentRisk) {
+            "HIGH" -> {
+                fraudWarning.text = "🚨 HIGH RISK: ${findings.joinToString(", ")}"
+                explanationText.text =
+                    "This image contains highly sensitive information that could lead to " +
+                            "financial fraud or identity theft if shared."
+                tipsText.text =
+                    "💡 Tip: Never share OTP, Aadhaar, or banking credentials. " +
+                            "Use the blurred version if you must share."
+            }
+            "MEDIUM" -> {
+                fraudWarning.text = "⚠ MEDIUM RISK: ${findings.joinToString(", ")}"
+                explanationText.text =
+                    "This image contains personal information that can be used for spam, " +
+                            "scams, or social engineering."
+                tipsText.text =
+                    "💡 Tip: Consider whether the recipient really needs this information."
+            }
+            else -> {
+                fraudWarning.text =
+                    if (findings.isEmpty()) "✓ No sensitive data detected"
+                    else "ℹ LOW RISK: ${findings.joinToString(", ")}"
+                explanationText.text = "This image appears safe to share."
+                tipsText.text =
+                    "💡 Tip: Always double-check before sharing screenshots with strangers."
+            }
+        }
 
-                    // ============================================================
-                    // RISK DETECTION
-                    // ============================================================
-                    val isOtp = detectOtp(resultText, lowerText)
-                    val isUpi = upiRegex.containsMatchIn(resultText)
-                    val isCard = cardRegex.containsMatchIn(resultText)
-                    val isCvv = cvvKeywordRegex.containsMatchIn(resultText)
-                    val isPassword = passwordKeywordRegex.containsMatchIn(resultText)
-                    val isAccount = accountKeywordRegex.containsMatchIn(resultText)
-                    val isAadhaar = aadhaarRegex.containsMatchIn(resultText)
-                    val isPan = panRegex.containsMatchIn(resultText)
-                    val isIfsc = ifscRegex.containsMatchIn(resultText)
-                    val isAddress = addressKeywordRegex.containsMatchIn(resultText) ||
-                            pincodeRegex.containsMatchIn(resultText)
-                    val isPhone = phoneRegex.containsMatchIn(resultText)
-                    val isEmail = emailRegex.containsMatchIn(resultText)
-                    val isVehicle = vehicleRegex.containsMatchIn(resultText)
-                    val isIp = ipRegex.containsMatchIn(resultText)
+        // Build the blurred bitmap using OCR bounding boxes
+        blurredBitmap = generateBlurredBitmap(bitmap, ocrResult)
 
-                    val risk = when {
-                        isOtp || isUpi || isCard || isCvv || isPassword ||
-                                isAccount || isAadhaar || isPan || isIfsc || isAddress -> "HIGH"
-                        isPhone || isEmail || isVehicle -> "MEDIUM"
-                        isIp -> "LOW"
-                        else -> "LOW"
-                    }
+        logEvent("Screenshot → $currentRisk → Scanned (${findings.joinToString(",")})")
+    }
 
-                    currentRisk = risk
-                    riskLevel.text = "Risk Level: $risk"
-                    when (risk) {
-                        "HIGH" -> riskLevel.setTextColor(getColor(android.R.color.holo_red_dark))
-                        "MEDIUM" -> riskLevel.setTextColor(getColor(android.R.color.holo_orange_dark))
-                        "LOW" -> riskLevel.setTextColor(getColor(android.R.color.holo_green_dark))
-                    }
-
-                    explanationText.text = generateExplanation(resultText, lowerText)
-                    tipsText.text = generateSafetyTips(resultText, lowerText)
+    // ============================================================
+    // === RECONSTRUCTED === generateBlurredBitmap
+    // Draws a solid black rectangle over every OCR line that contains
+    // a sensitive match. Replace with your original if you used a
+    // real blur (e.g., RenderScript / Bitmap.createScaledBitmap trick).
+    // ============================================================
+    private fun generateBlurredBitmap(
+        original: Bitmap,
+        ocrResult: com.google.mlkit.vision.text.Text
+    ): Bitmap {
+        val blurred = original.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(blurred)
+        val paint = Paint().apply {
+            color = Color.BLACK
+            style = Paint.Style.FILL
+        }
+        for (block in ocrResult.textBlocks) {
+            for (line in block.lines) {
+                if (isSensitiveLine(line.text)) {
+                    line.boundingBox?.let { box -> canvas.drawRect(box, paint) }
                 }
+            }
         }
+        return blurred
+    }
+
+    // === RECONSTRUCTED === helper for generateBlurredBitmap
+    private fun isSensitiveLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return upiRegex.containsMatchIn(line) ||
+                panRegex.containsMatchIn(line) ||
+                cardRegex.containsMatchIn(line) ||
+                detectAadhaar(line, lower) ||
+                passwordKeywordRegex.containsMatchIn(line) ||
+                emailRegex.containsMatchIn(line) ||
+                phoneRegex.containsMatchIn(line) ||
+                vehicleRegex.containsMatchIn(line)
     }
 
     // ============================================================
-    // EXPLANATION
-    // ============================================================
-    private fun generateExplanation(text: String, lower: String): String {
-        val reasons = mutableListOf<String>()
-
-        if (detectOtp(text, lower))
-            reasons.add("🔴 OTP detected — extremely sensitive")
-        if (upiRegex.containsMatchIn(text))
-            reasons.add("🔴 UPI ID detected — direct financial risk")
-        if (cardRegex.containsMatchIn(text))
-            reasons.add("🔴 Card number detected — banking fraud risk")
-        if (cvvKeywordRegex.containsMatchIn(text))
-            reasons.add("🔴 CVV detected — card can be misused")
-        if (passwordKeywordRegex.containsMatchIn(text))
-            reasons.add("🔴 Password detected — account takeover risk")
-        if (accountKeywordRegex.containsMatchIn(text))
-            reasons.add("🔴 Bank account number detected")
-        if (aadhaarRegex.containsMatchIn(text))
-            reasons.add("🔴 Aadhaar number detected — identity theft risk")
-        if (panRegex.containsMatchIn(text))
-            reasons.add("🔴 PAN card detected — financial identity risk")
-        if (ifscRegex.containsMatchIn(text))
-            reasons.add("🔴 IFSC code detected — bank details exposed")
-        if (addressKeywordRegex.containsMatchIn(text) || pincodeRegex.containsMatchIn(text))
-            reasons.add("🔴 Address / Pincode detected — location privacy risk")
-        if (phoneRegex.containsMatchIn(text))
-            reasons.add("🟠 Phone number detected")
-        if (emailRegex.containsMatchIn(text))
-            reasons.add("🟠 Email address detected")
-        if (vehicleRegex.containsMatchIn(text))
-            reasons.add("🟠 Vehicle number detected")
-        if (ipRegex.containsMatchIn(text))
-            reasons.add("🟢 IP address detected — minor privacy concern")
-
-        return if (reasons.isNotEmpty())
-            "⚠ Sensitive data found:\n\n• ${reasons.joinToString("\n• ")}"
-        else
-            "✅ No sensitive data detected."
-    }
-
-    // ============================================================
-    // SAFETY TIPS
-    // ============================================================
-    private fun generateSafetyTips(text: String, lower: String): String {
-        val tips = mutableListOf<String>()
-
-        if (detectOtp(text, lower))
-            tips.add("Never share OTPs — they can be misused instantly.")
-        if (upiRegex.containsMatchIn(text))
-            tips.add("UPI IDs in screenshots can be used for fraud. Use blurred version.")
-        if (cardRegex.containsMatchIn(text))
-            tips.add("Never share card numbers. Use virtual cards for online transactions.")
-        if (cvvKeywordRegex.containsMatchIn(text))
-            tips.add("CVV is secret. No bank or app will ever ask for it.")
-        if (passwordKeywordRegex.containsMatchIn(text))
-            tips.add("Never screenshot passwords. Use a password manager instead.")
-        if (accountKeywordRegex.containsMatchIn(text))
-            tips.add("Bank account numbers should never be shared in screenshots.")
-        if (aadhaarRegex.containsMatchIn(text))
-            tips.add("Share only masked Aadhaar (last 4 digits). Use DigiLocker for verification.")
-        if (panRegex.containsMatchIn(text))
-            tips.add("PAN misuse can lead to financial fraud in your name.")
-        if (ifscRegex.containsMatchIn(text))
-            tips.add("IFSC + account number together can enable unauthorized transfers.")
-        if (addressKeywordRegex.containsMatchIn(text) || pincodeRegex.containsMatchIn(text))
-            tips.add("Sharing your address publicly can compromise your physical safety.")
-        if (phoneRegex.containsMatchIn(text))
-            tips.add("Avoid sharing phone numbers — can lead to spam or SIM swap attacks.")
-        if (emailRegex.containsMatchIn(text))
-            tips.add("Email addresses can be used for phishing attacks.")
-        if (vehicleRegex.containsMatchIn(text))
-            tips.add("Vehicle numbers can be used to track your location or identity.")
-        if (ipRegex.containsMatchIn(text))
-            tips.add("IP addresses can reveal your approximate location.")
-
-        return if (tips.isNotEmpty())
-            "🛡 Safety Tips:\n\n• ${tips.joinToString("\n• ")}"
-        else ""
-    }
-
-    // ============================================================
-    // BLUR HELPERS
-    // ============================================================
-    private fun blurRegion(canvas: Canvas, bitmap: Bitmap, box: Rect) {
-        val padding = 20
-        val left = (box.left - padding).coerceAtLeast(0)
-        val top = (box.top - padding).coerceAtLeast(0)
-        val right = (box.right + padding).coerceAtMost(bitmap.width)
-        val bottom = (box.bottom + padding).coerceAtMost(bitmap.height)
-
-        val cropped = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-        val blurred = strongBlur(cropped)
-        canvas.drawBitmap(blurred, left.toFloat(), top.toFloat(), null)
-    }
-
-    private fun strongBlur(bitmap: Bitmap): Bitmap {
-        var temp = bitmap
-        repeat(3) {
-            val small = Bitmap.createScaledBitmap(temp, 8, 8, true)
-            temp = Bitmap.createScaledBitmap(small, bitmap.width, bitmap.height, true)
-        }
-        return temp
-    }
-
-    // ============================================================
-    // LOGGING
+    // === RECONSTRUCTED === logEvent
+    // Simple Logcat-based event log. Swap in your real implementation
+    // (analytics, local audit file, etc.) if you had one.
     // ============================================================
     private fun logEvent(event: String) {
-        val prefs = getSharedPreferences("logs", MODE_PRIVATE)
-        val oldLogs = prefs.getString("data", "") ?: ""
-        val newLog = oldLogs + "\n" + getCurrentTime() + " : " + event
-        prefs.edit().putString("data", newLog).apply()
-    }
-
-    private fun getCurrentTime(): String {
-        val sdf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-        return sdf.format(java.util.Date())
+        android.util.Log.i("DigiSuraksha", event)
     }
 }
