@@ -17,6 +17,8 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.File
+import java.io.FileOutputStream
 
 class ScreenshotScannerActivity : AppCompatActivity() {
 
@@ -293,10 +295,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                         1 -> {
                             blurredBitmap?.let {
                                 logEvent("Screenshot → $currentRisk → Shared (Blurred)")
-                                val path = MediaStore.Images.Media.insertImage(
-                                    contentResolver, it, "DigiSuraksha_Blurred", null
-                                )
-                                val uri = Uri.parse(path)
+                                val uri = getImageUri(it, "DigiSuraksha_Blurred")
                                 val intent = Intent(Intent.ACTION_SEND)
                                 intent.type = "image/*"
                                 intent.putExtra(Intent.EXTRA_STREAM, uri)
@@ -508,17 +507,44 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
         }
     }
-
     private fun doShareOriginal(bitmap: Bitmap) {
-        val path = MediaStore.Images.Media.insertImage(
-            contentResolver, bitmap, "DigiSuraksha_Original", null
+
+        try {
+
+            val uri = getImageUri(bitmap, "DigiSuraksha_Original")
+
+            val intent = Intent(Intent.ACTION_SEND)
+            intent.type = "image/*"
+            intent.putExtra(Intent.EXTRA_STREAM, uri)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+            startActivity(
+                Intent.createChooser(intent, "Share Original Image")
+            )
+
+        } catch (e: Exception) {
+
+            Toast.makeText(
+                this,
+                "Failed to share image: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun getImageUri(bitmap: Bitmap, fileName: String): Uri {
+        val file = File(cacheDir, "$fileName.png")
+
+        val stream = FileOutputStream(file)
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        stream.flush()
+        stream.close()
+
+        return androidx.core.content.FileProvider.getUriForFile(
+            this,
+            "${packageName}.provider",
+            file
         )
-        val uri = Uri.parse(path)
-        val intent = Intent(Intent.ACTION_SEND)
-        intent.type = "image/*"
-        intent.putExtra(Intent.EXTRA_STREAM, uri)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        startActivity(Intent.createChooser(intent, "Share Original Image"))
     }
 
     override fun onRequestPermissionsResult(
@@ -806,3 +832,11 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         android.util.Log.i("DigiSuraksha", event)
     }
 }
+
+
+
+
+
+
+
+
