@@ -829,7 +829,14 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     }
 
     private fun logEvent(event: String) {
-        android.util.Log.i("DigiSuraksha", event)
+        val prefs  = getSharedPreferences("logs", MODE_PRIVATE)
+        val oldLog = prefs.getString("data", "") ?: ""
+        prefs.edit().putString("data", "$oldLog\n${getCurrentTime()} : $event").apply()
+    }
+
+    private fun getCurrentTime(): String {
+        val sdf = java.text.SimpleDateFormat("HH:mm:ss dd-MM-yyyy", java.util.Locale.getDefault())
+        return sdf.format(java.util.Date())
     }
 }
 
