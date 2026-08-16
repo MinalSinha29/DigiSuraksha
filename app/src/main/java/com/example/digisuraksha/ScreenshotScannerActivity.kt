@@ -600,7 +600,8 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private fun analyzeText(
         recognizedText: String,
         bitmap: Bitmap,
-        ocrResult: com.google.mlkit.vision.text.Text
+        ocrResult: com.google.mlkit.vision.text.Text,
+        excludedTypes: Set<String> = emptySet()
     ) {
         val lowerText = recognizedText.lowercase()
 
@@ -652,37 +653,37 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         // ============================================================
         var maskedText = recognizedText
 
-        if (isAadhaar) {
+        if (isAadhaar && "AADHAAR" !in excludedTypes) {
             maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
         }
-        if (isPan) {
+        if (isPan && "PAN" !in excludedTypes) {
             maskedText = maskedText.replace(panRegex, "XXXXXXXXXX")
         }
-        if (isCard) {
+        if (isCard && "CARD" !in excludedTypes) {
             maskedText = maskedText.replace(cardRegex, "XXXX XXXX XXXX XXXX")
         }
-        if (isUpi) {
+        if (isUpi && "UPI" !in excludedTypes) {
             maskedText = maskedText.replace(upiRegex, "xxx@xxx")
         }
-        if (isPassword) {
+        if (isPassword && "PASSWORD" !in excludedTypes) {
             maskedText = maskedText.replace(passwordKeywordRegex, "password: ********")
         }
-        if (isOtp) {
+        if (isOtp && "OTP" !in excludedTypes) {
             maskedText = maskedText.replace(
                 Regex("(?<!\\d)\\d{4,8}(?!\\d)"),
                 "XXXXXX"
             )
         }
-        if (isPhone) {
+        if (isPhone && "PHONE" !in excludedTypes) {
             maskedText = maskedText.replace(phoneRegex, "+91-XXXXX-XXXXX")
         }
-        if (isEmail) {
+        if (isEmail && "EMAIL" !in excludedTypes) {
             maskedText = maskedText.replace(emailRegex, "xxx@xxx.com")
         }
-        if (isVehicle) {
+        if (isVehicle && "VEHICLE" !in excludedTypes) {
             maskedText = maskedText.replace(vehicleRegex, "XX00XX0000")
         }
-        if (isIp) {
+        if (isIp && "IP" !in excludedTypes) {
             maskedText = maskedText.replace(ipRegex, "xxx.xxx.xxx.xxx")
         }
 
@@ -789,14 +790,15 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
         }
 
-        blurredBitmap = generateBlurredBitmap(bitmap, ocrResult)
+        blurredBitmap = generateBlurredBitmap(bitmap, ocrResult, excludedTypes)
 
         logEvent("Screenshot → $currentRisk → Scanned (${findings.joinToString(",")})")
     }
 
     private fun generateBlurredBitmap(
         original: Bitmap,
-        ocrResult: com.google.mlkit.vision.text.Text
+        ocrResult: com.google.mlkit.vision.text.Text,
+        excludedTypes: Set<String> = emptySet()
     ): Bitmap {
         val blurred = original.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(blurred)
@@ -806,7 +808,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         }
         for (block in ocrResult.textBlocks) {
             for (line in block.lines) {
-                if (isSensitiveLine(line.text)) {
+                if (isSensitiveLine(line.text, excludedTypes)) {
                     line.boundingBox?.let { box -> canvas.drawRect(box, paint) }
                 }
             }
@@ -814,16 +816,16 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         return blurred
     }
 
-    private fun isSensitiveLine(line: String): Boolean {
+    private fun isSensitiveLine(line: String, excludedTypes: Set<String> = emptySet()): Boolean {
         val lower = line.lowercase()
-        return upiRegex.containsMatchIn(line) ||
-                panRegex.containsMatchIn(line) ||
-                cardRegex.containsMatchIn(line) ||
-                detectAadhaar(line, lower) ||
-                passwordKeywordRegex.containsMatchIn(line) ||
-                emailRegex.containsMatchIn(line) ||
-                phoneRegex.containsMatchIn(line) ||
-                vehicleRegex.containsMatchIn(line) ||
+        return ("UPI" !in excludedTypes && upiRegex.containsMatchIn(line)) ||
+                ("PAN" !in excludedTypes && panRegex.containsMatchIn(line)) ||
+                ("CARD" !in excludedTypes && cardRegex.containsMatchIn(line)) ||
+                ("AADHAAR" !in excludedTypes && detectAadhaar(line, lower)) ||
+                ("PASSWORD" !in excludedTypes && passwordKeywordRegex.containsMatchIn(line)) ||
+                ("EMAIL" !in excludedTypes && emailRegex.containsMatchIn(line)) ||
+                ("PHONE" !in excludedTypes && phoneRegex.containsMatchIn(line)) ||
+                ("VEHICLE" !in excludedTypes && vehicleRegex.containsMatchIn(line)) ||
                 // 🆕 Also redact lines that are part of a fraud message
                 fraudHighPhrases.any { it.containsMatchIn(line) }
     }
