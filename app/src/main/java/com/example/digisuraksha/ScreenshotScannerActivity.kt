@@ -245,6 +245,8 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private var detectedUpiQrPayee: String? = null   // payee name from QR if found
     private var detectedUpiQrAmount: String? = null  // pre-set amount from QR if found
     private var isUpiQrDetected = false
+    // 🔧 FIX: store the QR code's on-image position so it can actually be blurred
+    private var detectedUpiQrBoundingBox: Rect? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -451,6 +453,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     // Parses UPI payment URIs of the form:
     //   upi://pay?pa=VPA&pn=Name&am=Amount&...
     // Calls back with result via a lambda to fit async ML Kit flow.
+    // 🔧 FIX: also captures barcode.boundingBox so the QR region can be blurred.
     // ============================================================
     private fun detectUpiQrCode(bitmap: Bitmap, onResult: (Boolean) -> Unit) {
         val options = BarcodeScannerOptions.Builder()
@@ -464,6 +467,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                 isUpiQrDetected = false
                 detectedUpiQrPayee = null
                 detectedUpiQrAmount = null
+                detectedUpiQrBoundingBox = null
 
                 for (barcode in barcodes) {
                     val rawValue = barcode.rawValue ?: continue
@@ -472,6 +476,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     // UPI deep-link: upi://pay?pa=...
                     if (lower.startsWith("upi://")) {
                         isUpiQrDetected = true
+                        detectedUpiQrBoundingBox = barcode.boundingBox
                         // Parse payee name (pn) and amount (am) if present
                         val uri = Uri.parse(rawValue)
                         detectedUpiQrPayee = uri.getQueryParameter("pn")
@@ -484,6 +489,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     // Some QRs embed UPI handle text directly (e.g. "name@upihandle")
                     if (upiRegex.containsMatchIn(rawValue)) {
                         isUpiQrDetected = true
+                        detectedUpiQrBoundingBox = barcode.boundingBox
                         detectedUpiQrPayee = rawValue.trim()
                         logEvent("UPI handle QR detected → $rawValue")
                         break
@@ -493,6 +499,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
             .addOnFailureListener {
                 isUpiQrDetected = false
+                detectedUpiQrBoundingBox = null
                 onResult(false)
             }
     }
@@ -972,6 +979,20 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
         }
 
+        // 🔧 FIX: Also blur the UPI QR code region if one was detected and not excluded.
+        // QR codes are not picked up by ocrResult.textBlocks (that only contains OCR'd
+        // text lines), so without this the QR code itself was never actually redacted
+        // even though it was correctly detected and flagged as HIGH risk.
+        if (isUpiQrDetected && "UPI_QR" !in excludedTypes) {
+            detectedUpiQrBoundingBox?.let { box ->
+                android.util.Log.i(
+                    "DigiSuraksha_Redaction",
+                    "Blurring UPI QR region: (${box.left},${box.top},${box.right},${box.bottom})"
+                )
+                canvas.drawRect(box, paint)
+            }
+        }
+
         android.util.Log.i(
             "DigiSuraksha_Redaction",
             "=== Finished generateBlurredBitmap ==="
@@ -1148,6 +1169,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             upper.contains("AADHAAR") || upper.contains("AADHAR") -> "AADHAAR"
             upper.contains("PAN") -> "PAN"
             upper.contains("CARD") -> "CARD"
+            upper.contains("UPI QR") -> "UPI_QR"
             upper.contains("UPI") -> "UPI"
             upper.contains("PASSWORD") || upper.contains("PASSWD") -> "PASSWORD"
             upper.contains("OTP") || upper.contains("PASSCODE") -> "OTP"
@@ -1172,11 +1194,3 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         return sdf.format(java.util.Date())
     }
 }
-
-
-
-
-
-
-
-
