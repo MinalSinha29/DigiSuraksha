@@ -32,10 +32,15 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private lateinit var shareButton: Button
     private lateinit var explanationText: TextView
     private lateinit var tipsText: TextView
+    private lateinit var findingsCheckboxContainer: LinearLayout
 
     private var blurredBitmap: Bitmap? = null
     private var originalBitmap: Bitmap? = null
+    private var latestOcrResult: com.google.mlkit.vision.text.Text? = null
+    private var latestRecognizedText: String? = null
     private var currentRisk: String = "LOW"
+    // Person 3: stores fields excluded from redaction
+    private val excludedTypes = mutableSetOf<String>()
 
     // ============================================================
     // 🔴 HIGH RISK REGEXES
@@ -73,10 +78,10 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     )
 
     private val aadhaarRegex = Regex(
-        "(?<!\\d)(\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}|\\d{12})(?!\\d)"
+        "(?<!\\d)(\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}|\\d{12})(?!\\d)"
     )
     private val aadhaarSpacedRegex = Regex(
-        "(?<!\\d)\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}(?!\\d)"
+        "(?<!\\d)\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}(?!\\d)"
     )
     private val aadhaarContextKeywords = listOf(
         "government of india",
@@ -253,6 +258,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         shareButton = findViewById(R.id.shareSecure)
         explanationText = findViewById(R.id.explanationText)
         tipsText = findViewById(R.id.tipsText)
+        findingsCheckboxContainer = findViewById(R.id.findingsCheckboxContainer)
 
         if (checkSelfPermission(android.Manifest.permission.RECEIVE_SMS)
             != PackageManager.PERMISSION_GRANTED
@@ -284,26 +290,72 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     when (which) {
                         0 -> {
                             logEvent("Screenshot → $currentRisk → Shared (Masked Text)")
+
+                            val textToShare = latestRecognizedText?.let {
+                                buildMaskedText(it, excludedTypes)
+                            } ?: extractedText.text.toString()
+
                             val intent = Intent(Intent.ACTION_SEND)
                             intent.type = "text/plain"
+
                             intent.putExtra(
                                 Intent.EXTRA_TEXT,
-                                "Scanned using DigiSuraksha\n\n${extractedText.text}\n\n${riskLevel.text}"
+                                "Scanned using DigiSuraksha\n\n$textToShare\n\n${riskLevel.text}"
                             )
-                            startActivity(Intent.createChooser(intent, "Secure Share"))
+
+                            startActivity(
+                                Intent.createChooser(
+                                    intent,
+                                    "Secure Share"
+                                )
+                            )
                         }
+
                         1 -> {
-                            blurredBitmap?.let {
-                                logEvent("Screenshot → $currentRisk → Shared (Blurred)")
-                                val uri = getImageUri(it, "DigiSuraksha_Blurred")
-                                val intent = Intent(Intent.ACTION_SEND)
-                                intent.type = "image/*"
-                                intent.putExtra(Intent.EXTRA_STREAM, uri)
-                                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                startActivity(Intent.createChooser(intent, "Share Blurred Image"))
+                            if (originalBitmap != null && latestOcrResult != null) {
+                                blurredBitmap = generateBlurredBitmap(
+                                    originalBitmap!!,
+                                    latestOcrResult!!,
+                                    excludedTypes
+                                )
+
+                                blurredBitmap?.let {
+                                    logEvent("Screenshot → $currentRisk → Shared (Blurred)")
+
+                                    val uri = getImageUri(
+                                        it,
+                                        "DigiSuraksha_Blurred"
+                                    )
+
+                                    val intent = Intent(Intent.ACTION_SEND)
+                                    intent.type = "image/*"
+
+                                    intent.putExtra(
+                                        Intent.EXTRA_STREAM,
+                                        uri
+                                    )
+
+                                    intent.addFlags(
+                                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    )
+
+                                    startActivity(
+                                        Intent.createChooser(
+                                            intent,
+                                            "Share Blurred Image"
+                                        )
+                                    )
+                                }
                             }
                         }
-                        2 -> handleOriginalImageShare()
+
+                        2 -> {
+                            handleOriginalImageShare()
+                        }
+
+                        else -> {
+                            // No action
+                        }
                     }
                 }.show()
         }
@@ -571,6 +623,10 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             try {
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
                 originalBitmap = bitmap
+                latestOcrResult = null
+                latestRecognizedText = null
+                excludedTypes.clear()
+                findingsCheckboxContainer.removeAllViews()
                 imageView.setImageBitmap(bitmap)
 
                 // 🆕 Run UPI QR detection FIRST (async), then run OCR + analysis
@@ -597,12 +653,75 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
     }
 
+    // ============================================================
+    // PERSON 3 / PERSON 2 — BUILD MASKED TEXT WITH EXCLUSIONS
+    // ============================================================
+    private fun buildMaskedText(
+        recognizedText: String,
+        excludedTypes: Set<String> = emptySet()
+    ): String {
+        val lowerText = recognizedText.lowercase()
+
+        val isUpi = upiRegex.containsMatchIn(recognizedText)
+        val isPan = panRegex.containsMatchIn(recognizedText)
+        val isCard = cardRegex.containsMatchIn(recognizedText) &&
+                cardKeywords.any { lowerText.contains(it) }
+        val isAadhaar = detectAadhaar(recognizedText, lowerText)
+        val isPassword = passwordKeywordRegex.containsMatchIn(recognizedText)
+        val isOtp = detectOtp(recognizedText, lowerText)
+        val isEmail = emailRegex.containsMatchIn(recognizedText)
+        val isPhone = detectPhone(recognizedText, isAadhaar)
+        val isVehicle = vehicleRegex.containsMatchIn(recognizedText)
+        val isIp = ipRegex.containsMatchIn(recognizedText)
+
+        // Masking order: AADHAAR FIRST, then PAN, then CARD
+        var maskedText = recognizedText
+
+        if (isAadhaar && "AADHAAR" !in excludedTypes) {
+            maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
+        }
+        if (isPan && "PAN" !in excludedTypes) {
+            maskedText = maskedText.replace(panRegex, "XXXXXXXXXX")
+        }
+        if (isCard && "CARD" !in excludedTypes) {
+            maskedText = maskedText.replace(cardRegex, "XXXX XXXX XXXX XXXX")
+        }
+        if (isUpi && "UPI" !in excludedTypes) {
+            maskedText = maskedText.replace(upiRegex, "xxx@xxx")
+        }
+        if (isPassword && "PASSWORD" !in excludedTypes) {
+            maskedText = maskedText.replace(passwordKeywordRegex, "password: ********")
+        }
+        if (isOtp && "OTP" !in excludedTypes) {
+            maskedText = maskedText.replace(
+                Regex("(?<!\\d)\\d{4,8}(?!\\d)"),
+                "XXXXXX"
+            )
+        }
+        if (isPhone && "PHONE" !in excludedTypes) {
+            maskedText = maskedText.replace(phoneRegex, "+91-XXXXX-XXXXX")
+        }
+        if (isEmail && "EMAIL" !in excludedTypes) {
+            maskedText = maskedText.replace(emailRegex, "xxx@xxx.com")
+        }
+        if (isVehicle && "VEHICLE" !in excludedTypes) {
+            maskedText = maskedText.replace(vehicleRegex, "XX00XX0000")
+        }
+        if (isIp && "IP" !in excludedTypes) {
+            maskedText = maskedText.replace(ipRegex, "xxx.xxx.xxx.xxx")
+        }
+
+        return maskedText
+    }
+
     private fun analyzeText(
         recognizedText: String,
         bitmap: Bitmap,
         ocrResult: com.google.mlkit.vision.text.Text,
         excludedTypes: Set<String> = emptySet()
     ) {
+        latestOcrResult = ocrResult
+        latestRecognizedText = recognizedText
         val lowerText = recognizedText.lowercase()
 
         // -------- HIGH RISK --------
@@ -651,57 +770,56 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         // ============================================================
         // Masking order: AADHAAR FIRST, then PAN, then CARD
         // ============================================================
-        var maskedText = recognizedText
-
-        if (isAadhaar && "AADHAAR" !in excludedTypes) {
-            maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
-        }
-        if (isPan && "PAN" !in excludedTypes) {
-            maskedText = maskedText.replace(panRegex, "XXXXXXXXXX")
-        }
-        if (isCard && "CARD" !in excludedTypes) {
-            maskedText = maskedText.replace(cardRegex, "XXXX XXXX XXXX XXXX")
-        }
-        if (isUpi && "UPI" !in excludedTypes) {
-            maskedText = maskedText.replace(upiRegex, "xxx@xxx")
-        }
-        if (isPassword && "PASSWORD" !in excludedTypes) {
-            maskedText = maskedText.replace(passwordKeywordRegex, "password: ********")
-        }
-        if (isOtp && "OTP" !in excludedTypes) {
-            maskedText = maskedText.replace(
-                Regex("(?<!\\d)\\d{4,8}(?!\\d)"),
-                "XXXXXX"
-            )
-        }
-        if (isPhone && "PHONE" !in excludedTypes) {
-            maskedText = maskedText.replace(phoneRegex, "+91-XXXXX-XXXXX")
-        }
-        if (isEmail && "EMAIL" !in excludedTypes) {
-            maskedText = maskedText.replace(emailRegex, "xxx@xxx.com")
-        }
-        if (isVehicle && "VEHICLE" !in excludedTypes) {
-            maskedText = maskedText.replace(vehicleRegex, "XX00XX0000")
-        }
-        if (isIp && "IP" !in excludedTypes) {
-            maskedText = maskedText.replace(ipRegex, "xxx.xxx.xxx.xxx")
-        }
-
-        extractedText.text = maskedText
+        extractedText.text = buildMaskedText(recognizedText, this.excludedTypes)
 
         // -------- Build findings list for the UI --------
         val findings = mutableListOf<String>()
-        if (isUpi) findings.add("UPI ID")
-        if (isPan) findings.add("PAN Number")
-        if (isCard) findings.add("Card Number")
-        if (isAadhaar) findings.add("Aadhaar Number")
-        if (isPassword) findings.add("Password")
-        if (isAddress) findings.add("Address")
-        if (isOtp) findings.add("OTP")
-        if (isEmail) findings.add("Email")
-        if (isPhone) findings.add("Phone Number")
-        if (isVehicle) findings.add("Vehicle Number")
-        if (isIp) findings.add("IP Address")
+        val findingItemsWithReasons = mutableListOf<Pair<String, String>>()
+
+        if (isUpi) {
+            findings.add("UPI ID")
+            findingItemsWithReasons.add("UPI ID" to "UPI VPA handle found")
+        }
+        if (isPan) {
+            findings.add("PAN Number")
+            findingItemsWithReasons.add("PAN Number" to "10-character PAN format found")
+        }
+        if (isCard) {
+            findings.add("Card Number")
+            findingItemsWithReasons.add("Card Number" to "16-digit card pattern found")
+        }
+        if (isAadhaar) {
+            findings.add("Aadhaar Number")
+            findingItemsWithReasons.add("Aadhaar Number" to "12-digit Aadhaar pattern found")
+        }
+        if (isPassword) {
+            findings.add("Password")
+            findingItemsWithReasons.add("Password" to "Password keyword pattern found")
+        }
+        if (isAddress) {
+            findings.add("Address")
+            findingItemsWithReasons.add("Address" to "Street/area and PIN code found")
+        }
+        if (isOtp) {
+            findings.add("OTP")
+            findingItemsWithReasons.add("OTP" to "One-time passcode pattern found")
+        }
+        if (isEmail) {
+            findings.add("Email")
+            findingItemsWithReasons.add("Email" to "Email address pattern found")
+        }
+        if (isPhone) {
+            findings.add("Phone Number")
+            findingItemsWithReasons.add("Phone Number" to "10-digit phone number found")
+        }
+        if (isVehicle) {
+            findings.add("Vehicle Number")
+            findingItemsWithReasons.add("Vehicle Number" to "Vehicle registration plate found")
+        }
+        if (isIp) {
+            findings.add("IP Address")
+            findingItemsWithReasons.add("IP Address" to "IPv4 network address found")
+        }
         // 🆕 New findings
         if (isUpiQrDetected) {
             val qrLabel = buildString {
@@ -710,8 +828,27 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                 detectedUpiQrAmount?.let { append(" ₹$it") }
             }
             findings.add(qrLabel)
+            val qrReason = buildString {
+                append("Payment QR code detected")
+                if (detectedUpiQrPayee != null || detectedUpiQrAmount != null) {
+                    append(" (")
+                    detectedUpiQrPayee?.let { append("Payee: $it") }
+                    if (detectedUpiQrPayee != null && detectedUpiQrAmount != null) append(", ")
+                    detectedUpiQrAmount?.let { append("₹$it") }
+                    append(")")
+                }
+            }
+            findingItemsWithReasons.add("UPI QR Code" to qrReason)
         }
-        findings.addAll(fraudFindings)  // adds "Scam Message" / "Suspicious Message"
+        for (f in fraudFindings) {
+            findings.add(f)
+            val reason = if (f == "Scam Message") {
+                "High-confidence fraud phrases detected"
+            } else {
+                "Suspicious urgency/offer pattern detected"
+            }
+            findingItemsWithReasons.add(f to reason)
+        }
 
         riskLevel.text = "Risk Level: $currentRisk"
 
@@ -789,8 +926,11 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     "💡 Tip: Always double-check before sharing screenshots with strangers."
             }
         }
-
-        blurredBitmap = generateBlurredBitmap(bitmap, ocrResult, excludedTypes)
+        // ============================================================
+        // PERSON 3 — BUILD PER-FIELD REDACTION CHECKLIST
+        // ============================================================
+        setupFindingsCheckboxesWithReasons(findingItemsWithReasons)
+        blurredBitmap = generateBlurredBitmap(bitmap, ocrResult, this.excludedTypes)
 
         logEvent("Screenshot → $currentRisk → Scanned (${findings.joinToString(",")})")
     }
@@ -806,30 +946,221 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             color = Color.BLACK
             style = Paint.Style.FILL
         }
+
+        android.util.Log.i(
+            "DigiSuraksha_Redaction",
+            "=== Starting generateBlurredBitmap with excludedTypes=$excludedTypes ==="
+        )
+
         for (block in ocrResult.textBlocks) {
             for (line in block.lines) {
-                if (isSensitiveLine(line.text, excludedTypes)) {
-                    line.boundingBox?.let { box -> canvas.drawRect(box, paint) }
+                val box = line.boundingBox
+                val boxStr = box?.let { "(${it.left},${it.top},${it.right},${it.bottom})" } ?: "(null)"
+                val decision = evaluateLineRedaction(line.text, excludedTypes)
+
+                val decisionStr = if (decision.shouldBlur) "BLUR" else "SKIP"
+                val typeStr = if (decision.detectedTypes.isNotEmpty()) decision.detectedTypes.joinToString(",") else "NONE"
+
+                android.util.Log.i(
+                    "DigiSuraksha_Redaction",
+                    "TEXT='${line.text}' | TYPE=$typeStr | BOX=$boxStr | excluded=$excludedTypes | DECISION=$decisionStr | REASON=${decision.reason}"
+                )
+
+                if (decision.shouldBlur) {
+                    box?.let { canvas.drawRect(it, paint) }
                 }
             }
         }
+
+        android.util.Log.i(
+            "DigiSuraksha_Redaction",
+            "=== Finished generateBlurredBitmap ==="
+        )
+
         return blurred
     }
 
-    private fun isSensitiveLine(line: String, excludedTypes: Set<String> = emptySet()): Boolean {
+    private data class RedactionDecision(
+        val shouldBlur: Boolean,
+        val detectedTypes: List<String>,
+        val reason: String
+    )
+
+    private fun evaluateLineRedaction(
+        line: String,
+        excludedTypes: Set<String>
+    ): RedactionDecision {
         val lower = line.lowercase()
-        return ("UPI" !in excludedTypes && upiRegex.containsMatchIn(line)) ||
-                ("PAN" !in excludedTypes && panRegex.containsMatchIn(line)) ||
-                ("CARD" !in excludedTypes && cardRegex.containsMatchIn(line)) ||
-                ("AADHAAR" !in excludedTypes && detectAadhaar(line, lower)) ||
-                ("PASSWORD" !in excludedTypes && passwordKeywordRegex.containsMatchIn(line)) ||
-                ("EMAIL" !in excludedTypes && emailRegex.containsMatchIn(line)) ||
-                ("PHONE" !in excludedTypes && phoneRegex.containsMatchIn(line)) ||
-                ("VEHICLE" !in excludedTypes && vehicleRegex.containsMatchIn(line)) ||
-                // 🆕 Also redact lines that are part of a fraud message
-                fraudHighPhrases.any { it.containsMatchIn(line) }
+        val detected = mutableListOf<String>()
+        val blurringReasons = mutableListOf<String>()
+
+        // 1. Identify sensitive types present on this line
+        val hasAadhaar = aadhaarRegex.containsMatchIn(line) || detectAadhaar(line, lower)
+        if (hasAadhaar) detected.add("AADHAAR")
+
+        val hasPan = panRegex.containsMatchIn(line)
+        if (hasPan) detected.add("PAN")
+
+        val hasCard = cardRegex.containsMatchIn(line)
+        if (hasCard) detected.add("CARD")
+
+        val hasUpi = upiRegex.containsMatchIn(line)
+        if (hasUpi) detected.add("UPI")
+
+        val hasPassword = passwordKeywordRegex.containsMatchIn(line)
+        if (hasPassword) detected.add("PASSWORD")
+
+        val hasEmail = emailRegex.containsMatchIn(line)
+        if (hasEmail) detected.add("EMAIL")
+
+        // Overlap protection: Aadhaar numbers must not be treated as phone numbers
+        val hasPhone = if (hasAadhaar) {
+            val stripped = aadhaarRegex.replace(line, "XXXXXXXXXXXX")
+            phoneRegex.containsMatchIn(stripped)
+        } else {
+            phoneRegex.containsMatchIn(line)
+        }
+        if (hasPhone) detected.add("PHONE")
+
+        val hasVehicle = vehicleRegex.containsMatchIn(line)
+        if (hasVehicle) detected.add("VEHICLE")
+
+        val hasIp = ipRegex.containsMatchIn(line)
+        if (hasIp) detected.add("IP")
+
+        val hasOtp = detectOtp(line, lower)
+        if (hasOtp) detected.add("OTP")
+
+        val hasAddress = addressKeywordRegex.containsMatchIn(line) && pincodeRegex.containsMatchIn(line)
+        if (hasAddress) detected.add("ADDRESS")
+
+        val hasFraud = fraudHighPhrases.any { it.containsMatchIn(line) }
+        if (hasFraud) detected.add("FRAUD")
+
+        // 2. Check each detected type against excludedTypes
+        for (type in detected) {
+            if (type == "FRAUD") {
+                blurringReasons.add("FRAUD detected")
+            } else if (type !in excludedTypes) {
+                blurringReasons.add("$type not in excludedTypes")
+            }
+        }
+
+        val shouldBlur = blurringReasons.isNotEmpty()
+        val reasonStr = if (shouldBlur) {
+            "Blurring because: ${blurringReasons.joinToString(", ")}"
+        } else if (detected.isNotEmpty()) {
+            "Skipped because all detected types (${detected.joinToString(",")}) are in excludedTypes"
+        } else {
+            "No sensitive data detected on this line"
+        }
+
+        return RedactionDecision(shouldBlur, detected, reasonStr)
     }
 
+    private fun isSensitiveLine(line: String, excludedTypes: Set<String> = emptySet()): Boolean {
+        return evaluateLineRedaction(line, excludedTypes).shouldBlur
+    }
+    // ============================================================
+    // PERSON 3 — PER-FIELD REDACTION CHECKBOX UI
+    // ============================================================
+    private fun setupFindingsCheckboxesWithReasons(findingItems: List<Pair<String, String>>) {
+        findingsCheckboxContainer.removeAllViews()
+        excludedTypes.clear()
+
+        // No sensitive information detected
+        if (findingItems.isEmpty()) {
+            val noFindingsText = TextView(this).apply {
+                text = "✓ No sensitive information detected."
+                textSize = 15f
+                setPadding(8, 8, 8, 8)
+            }
+
+            findingsCheckboxContainer.addView(noFindingsText)
+            return
+        }
+
+        // Create one checkbox for every detected finding with its reason
+        for ((name, reason) in findingItems) {
+            val type = getExcludedType(name)
+            val displayText = "$name — $reason"
+
+            val checkBox = CheckBox(this).apply {
+                text = displayText
+                textSize = 14f
+
+                // Everything is selected by default.
+                // Selected = this information WILL be redacted.
+                isChecked = true
+
+                setPadding(8, 4, 8, 4)
+
+                setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) {
+                        // Checked means redact this information.
+                        excludedTypes.remove(type)
+                    } else {
+                        // Unchecked means don't redact this information.
+                        excludedTypes.add(type)
+                    }
+
+                    // Dynamically update extracted text preview
+                    latestRecognizedText?.let { rawText ->
+                        extractedText.text = buildMaskedText(rawText, excludedTypes)
+                    }
+                }
+            }
+
+            findingsCheckboxContainer.addView(checkBox)
+        }
+    }
+
+    // Overload for compatibility if called with List<String>
+    private fun setupFindingsCheckboxes(findings: List<String>) {
+        val pairs = findings.map { finding ->
+            val type = getExcludedType(finding)
+            val defaultReason = when (type) {
+                "AADHAAR" -> "12-digit Aadhaar pattern found"
+                "PAN" -> "10-character PAN format found"
+                "CARD" -> "16-digit card pattern found"
+                "UPI" -> "UPI VPA handle found"
+                "PASSWORD" -> "Password keyword pattern found"
+                "OTP" -> "One-time passcode pattern found"
+                "PHONE" -> "10-digit phone number found"
+                "EMAIL" -> "Email address pattern found"
+                "VEHICLE" -> "Vehicle registration plate found"
+                "IP" -> "IPv4 network address found"
+                "ADDRESS" -> "Street/area and PIN code found"
+                "SCAM" -> "High-confidence fraud phrases detected"
+                "SUSPICIOUS" -> "Suspicious urgency/offer pattern detected"
+                else -> "Sensitive pattern detected"
+            }
+            finding to defaultReason
+        }
+        setupFindingsCheckboxesWithReasons(pairs)
+    }
+
+    // Convert the user-facing finding name into the
+    // internal detection type used by Person 2's masking logic.
+    private fun getExcludedType(finding: String): String {
+        val upper = finding.uppercase()
+        return when {
+            upper.contains("AADHAAR") || upper.contains("AADHAR") -> "AADHAAR"
+            upper.contains("PAN") -> "PAN"
+            upper.contains("CARD") -> "CARD"
+            upper.contains("UPI") -> "UPI"
+            upper.contains("PASSWORD") || upper.contains("PASSWD") -> "PASSWORD"
+            upper.contains("OTP") || upper.contains("PASSCODE") -> "OTP"
+            upper.contains("PHONE") || upper.contains("MOBILE") -> "PHONE"
+            upper.contains("EMAIL") -> "EMAIL"
+            upper.contains("VEHICLE") -> "VEHICLE"
+            upper.contains("IP ADDRESS") || upper.startsWith("IP") -> "IP"
+            upper.contains("ADDRESS") || upper.contains("PINCODE") -> "ADDRESS"
+            upper.contains("SCAM") -> "SCAM"
+            upper.contains("SUSPICIOUS") -> "SUSPICIOUS"
+            else -> upper.split("—", "-", " ").firstOrNull()?.trim() ?: upper
+        }
+    }
     private fun logEvent(event: String) {
         val prefs  = getSharedPreferences("logs", MODE_PRIVATE)
         val oldLog = prefs.getString("data", "") ?: ""
