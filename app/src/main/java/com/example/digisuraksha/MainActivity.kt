@@ -15,10 +15,14 @@ class MainActivity : AppCompatActivity() {
 
         requestAllPermissions()
 
+        // Day 2/3: Initialize notification channel & sync ScreenshotDetector with user setting
+        ScreenshotNotificationHelper.createNotificationChannel(this)
+        SettingsManager.syncAutoDetect(applicationContext)
+
         val startButton = findViewById<Button>(R.id.startButton)
 
         startButton.setOnClickListener {
-            val intent = Intent(this, HomeActivity::class.java)
+            val intent = Intent(this, OnboardingActivity::class.java)
             startActivity(intent)
         }
     }

@@ -275,10 +275,11 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         }
 
         selectButton.setOnClickListener {
-            val intent = Intent(Intent.ACTION_PICK)
-            intent.type = "image/*"
-            startActivityForResult(intent, PICK_IMAGE)
+            checkMediaPermissionAndOpenPicker()
         }
+
+        // Day 3: Handle pre-filled screenshot passed from Notification PendingIntent
+        handleIncomingScreenshotIntent(intent)
 
         shareButton.setOnClickListener {
             val options = arrayOf(
@@ -620,6 +621,101 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "SMS Permission Denied", Toast.LENGTH_SHORT).show()
             }
+        } else if (requestCode == MediaPermissionHelper.MEDIA_PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Media permission granted", Toast.LENGTH_SHORT).show()
+                openImagePicker()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Permission denied. DigiSuraksha requires image permission to analyze screenshots on-device.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun openImagePicker() {
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        startActivityForResult(intent, PICK_IMAGE)
+    }
+
+    private fun checkMediaPermissionAndOpenPicker() {
+        MediaPermissionHelper.requestMediaPermissionWithConsent(
+            activity = this,
+            onAlreadyGranted = {
+                openImagePicker()
+            },
+            onRequestPermission = { permission ->
+                requestPermissions(
+                    arrayOf(permission),
+                    MediaPermissionHelper.MEDIA_PERMISSION_REQUEST_CODE
+                )
+            },
+            onConsentDenied = {
+                Toast.makeText(
+                    this,
+                    "Permission consent not granted. You can grant access anytime to analyze screenshots.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingScreenshotIntent(intent)
+    }
+
+    private fun handleIncomingScreenshotIntent(incomingIntent: Intent?) {
+        if (incomingIntent == null) return
+        val uriString = incomingIntent.getStringExtra("screenshot_uri")
+        val uri: Uri? = incomingIntent.data ?: (uriString?.let { Uri.parse(it) })
+        if (uri != null) {
+            if (MediaPermissionHelper.isPermissionGranted(this)) {
+                loadAndProcessImageUri(uri)
+            } else {
+                MediaPermissionHelper.requestMediaPermissionWithConsent(
+                    activity = this,
+                    onAlreadyGranted = { loadAndProcessImageUri(uri) },
+                    onRequestPermission = { permission ->
+                        requestPermissions(arrayOf(permission), MediaPermissionHelper.MEDIA_PERMISSION_REQUEST_CODE)
+                    },
+                    onConsentDenied = {
+                        Toast.makeText(this, "Permission consent required to scan screenshot.", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+    }
+
+    private fun loadAndProcessImageUri(uri: Uri) {
+        try {
+            val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
+            if (bitmap == null) {
+                Toast.makeText(this, "Screenshot file is no longer available.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            originalBitmap = bitmap
+            latestOcrResult = null
+            latestRecognizedText = null
+            excludedTypes.clear()
+            findingsCheckboxContainer.removeAllViews()
+            imageView.setImageBitmap(bitmap)
+
+            detectUpiQrCode(bitmap) { qrFound ->
+                runOnUiThread {
+                    analyzeImage(bitmap)
+                }
+            }
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Screenshot file is no longer available.",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
