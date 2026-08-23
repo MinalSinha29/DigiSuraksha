@@ -17,6 +17,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DigiSuraksha">
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
@@ -28,7 +29,18 @@
                 android:resource="@xml/file_paths" />
 
         </provider>
-        <!-- ✅ FIXED: Only ONE LogsActivity -->
+
+        <!-- ⚙️ Phase 3: Settings Activity -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
+        <!-- 📖 Phase 3: Onboarding Flow Activity -->
+        <activity
+            android:name=".OnboardingActivity"
+            android:exported="false" />
+
+        <!-- 📜 Logs Activity -->
         <activity
             android:name=".LogsActivity"
             android:exported="false" />

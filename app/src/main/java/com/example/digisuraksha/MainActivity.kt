@@ -1,5 +1,6 @@
 package com.example.digisuraksha
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -21,8 +22,15 @@ class MainActivity : AppCompatActivity() {
         val startButton = findViewById<Button>(R.id.startButton)
 
         startButton.setOnClickListener {
-            val intent = Intent(this, HomeActivity::class.java)
-            startActivity(intent)
+            // 📖 Phase 3: Route to Onboarding on first launch, or HomeActivity if already seen
+            val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val isCompleted = prefs.getBoolean("onboarding_completed", false)
+
+            if (!isCompleted) {
+                startActivity(Intent(this, OnboardingActivity::class.java))
+            } else {
+                startActivity(Intent(this, HomeActivity::class.java))
+            }
         }
     }
 

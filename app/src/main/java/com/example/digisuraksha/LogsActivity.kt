@@ -50,7 +50,6 @@ class LogsActivity : AppCompatActivity() {
 
         val parsedItems = mutableListOf<CleanLogItem>()
 
-        // Split by lines and parse each line cleanly
         val lines = rawData.lines()
         for (line in lines) {
             val trimmed = line.trim()
@@ -70,46 +69,98 @@ class LogsActivity : AppCompatActivity() {
         }
     }
 
-    // Intelligent parser for any log string format
+    // 🎯 Robust parser that correctly handles all timestamp formats
     private fun parseLogLine(line: String): CleanLogItem {
-        // Split timestamp from message: "dd/MM/yyyy HH:mm:ss : Event" or "HH:mm:ss : Event"
-        val parts = line.split(Regex("\\s*:\\s*"), limit = 2)
-        val timePart = if (parts.isNotEmpty()) parts[0].trim() else "Recent"
-        val messagePart = if (parts.size > 1) parts[1].trim() else line.trim()
+        var rawTime = ""
+        var rawMessage = line.trim()
 
+        // Match "dd/MM/yyyy HH:mm:ss : Event" or "dd-MM-yyyy HH:mm:ss : Event"
+        val fullDateTimeRegex = Regex("^(\\d{2}[-/]\\d{2}[-/]\\d{4}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)\\s*:\\s*(.*)$")
+        // Match "HH:mm:ss dd-MM-yyyy : Event"
+        val timeAndDateRegex = Regex("^(\\d{1,2}:\\d{2}(?::\\d{2})?\\s+\\d{2}[-/]\\d{2}[-/]\\d{4})\\s*:\\s*(.*)$")
+        // Match "HH:mm:ss : Event"
+        val timeOnlyRegex = Regex("^(\\d{1,2}:\\d{2}(?::\\d{2})?)\\s*:\\s*(.*)$")
+
+        val m1 = fullDateTimeRegex.find(rawMessage)
+        val m2 = if (m1 == null) timeAndDateRegex.find(rawMessage) else null
+        val m3 = if (m1 == null && m2 == null) timeOnlyRegex.find(rawMessage) else null
+
+        when {
+            m1 != null -> {
+                rawTime = m1.groupValues[1]
+                rawMessage = m1.groupValues[2]
+            }
+            m2 != null -> {
+                rawTime = m2.groupValues[1]
+                rawMessage = m2.groupValues[2]
+            }
+            m3 != null -> {
+                rawTime = m3.groupValues[1]
+                rawMessage = m3.groupValues[2]
+            }
+            else -> {
+                rawTime = "Recent"
+            }
+        }
+
+        // Determine Type
         val type = when {
-            messagePart.contains("SMS", ignoreCase = true) -> "SMS"
-            messagePart.contains("Screenshot", ignoreCase = true) -> "SCREENSHOT"
+            rawMessage.contains("SMS", ignoreCase = true) -> "SMS"
+            rawMessage.contains("Screenshot", ignoreCase = true) -> "SCREENSHOT"
             else -> "SYSTEM"
         }
 
+        // Determine Risk
         val risk = when {
-            messagePart.contains("HIGH", ignoreCase = true) || messagePart.contains("CRITICAL", ignoreCase = true) -> "HIGH"
-            messagePart.contains("MEDIUM", ignoreCase = true) || messagePart.contains("WARNING", ignoreCase = true) -> "MEDIUM"
-            messagePart.contains("LOW", ignoreCase = true) || messagePart.contains("SAFE", ignoreCase = true) || messagePart.contains("CLEAN", ignoreCase = true) -> "LOW"
+            rawMessage.contains("HIGH", ignoreCase = true) ||
+                    rawMessage.contains("CRITICAL", ignoreCase = true) ||
+                    rawMessage.contains("High risk", ignoreCase = true) -> "HIGH"
+
+            rawMessage.contains("MEDIUM", ignoreCase = true) ||
+                    rawMessage.contains("WARNING", ignoreCase = true) -> "MEDIUM"
+
+            rawMessage.contains("LOW", ignoreCase = true) ||
+                    rawMessage.contains("SAFE", ignoreCase = true) ||
+                    rawMessage.contains("CLEAN", ignoreCase = true) -> "LOW"
+
             else -> "INFO"
         }
 
+        // Clean details text (strip duplicate arrows & technical artifacts)
+        var cleanDetails = rawMessage
+            .replace("→", "•")
+            .replace("->", "•")
+            .replace(Regex("Screenshot\\s*•?\\s*"), "")
+            .replace(Regex("SMS\\s*•?\\s*"), "")
+            .replace(Regex("LOW\\s*•?\\s*"), "")
+            .replace(Regex("HIGH\\s*•?\\s*"), "")
+            .replace(Regex("MEDIUM\\s*•?\\s*"), "")
+            .replace(Regex("CRITICAL\\s*•?\\s*"), "")
+            .replace("Scanned ()", "Scanned (Safe — No sensitive PII detected)")
+            .trim()
+            .trimStart('•', ':', ' ')
+            .trim()
+
+        // Clean user-friendly Title
         val title = when {
-            messagePart.contains("Auto-Detected in Background", true) -> "⚡ Auto-Detected in Background"
-            messagePart.contains("Auto-Detected from Background Notification", true) -> "📲 Opened via Notification"
-            messagePart.contains("Shared (Blurred)", true) -> "🛡️ Shared Blurred Image"
-            messagePart.contains("Shared (Masked", true) -> "📝 Shared Masked Text"
-            messagePart.contains("Shared (Original", true) -> "⚠️ Shared Original Image"
-            messagePart.contains("Scanned", true) -> "🔍 Screenshot Scanned"
-            messagePart.contains("SMS analyzed", true) -> "📩 SMS Scanned"
-            messagePart.contains("High risk", true) -> "🚨 High Risk Threat Detected"
-            else -> messagePart.replace("→", "•").split("•").firstOrNull()?.trim() ?: "Security Event"
+            rawMessage.contains("Auto-Detected in Background", true) -> "⚡ Auto-Detected in Background"
+            rawMessage.contains("Opened via Notification", true) || rawMessage.contains("Auto-Detected from Background Notification", true) -> "📲 Opened via Notification"
+            rawMessage.contains("Shared (Blurred)", true) || rawMessage.contains("Shared blurred image", true) -> "🛡️ Shared Blurred Image"
+            rawMessage.contains("Shared (Masked", true) -> "📝 Shared Masked Text"
+            rawMessage.contains("Shared (Original", true) -> "⚠️ Shared Original Image"
+            rawMessage.contains("User attempted to share", true) -> "📤 Share Attempt"
+            rawMessage.contains("Scanned", true) -> "🔍 Screenshot Scanned"
+            rawMessage.contains("SMS analyzed", true) -> "📩 SMS Scanned"
+            rawMessage.contains("High risk", true) -> "🚨 High Risk Threat Detected"
+            else -> cleanDetails.split("•").firstOrNull()?.trim() ?: "Security Event"
         }
 
-        val details = messagePart.replace("→", "•").replace("->", "•")
-
         return CleanLogItem(
-            time = timePart,
+            time = rawTime,
             type = type,
             risk = risk,
             title = title,
-            details = details
+            details = cleanDetails.ifBlank { "Analysis complete" }
         )
     }
 
