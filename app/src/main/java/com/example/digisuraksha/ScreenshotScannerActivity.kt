@@ -61,10 +61,15 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             RegexOption.IGNORE_CASE
         )
 
+        // 🔧 FIX: allow one-or-more spaces/dashes between digit groups (was exactly one),
+        // matching the same convention used by aadhaarRegex/phoneRegex below. OCR output
+        // frequently has multiple spaces between groups, which was causing real card
+        // numbers to silently fail this match — so isCard came back false and the card
+        // number was never blurred in the image or masked in the text.
         internal val cardRegex = Regex(
             "(?<!\\d)" +
                     "(?:" +
-                    "\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}[\\s-]\\d{4}" +
+                    "\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}[\\s-]+\\d{4}" +
                     "|\\d{16}" +
                     ")(?!\\d)"
         )
@@ -276,6 +281,19 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         }
 
         // ============================================================
+        // 🔧 FIX: mask Aadhaar but keep the last 4 digits visible
+        // (e.g. "XXXX XXXX 1234") instead of blacking out all 12 digits.
+        // Works regardless of whether the matched text used spaces,
+        // dashes, or was one continuous 12-digit run.
+        // ============================================================
+        internal fun maskAadhaarKeepLast4(matched: String): String {
+            val digitsOnly = matched.filter { it.isDigit() }
+            if (digitsOnly.length < 4) return matched
+            val last4 = digitsOnly.takeLast(4)
+            return "XXXX XXXX $last4"
+        }
+
+        // ============================================================
         // PERSON 3 / PERSON 2 — BUILD MASKED TEXT WITH EXCLUSIONS
         // Masking order: CARD FIRST (with keyword guard), then AADHAAR
         // (with Card placeholder protection), then PAN, then UPI,
@@ -318,13 +336,13 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                         placeholders.add(token to match)
                         tempText = tempText.replaceFirst(match, token)
                     }
-                    tempText = tempText.replace(aadhaarRegex, "XXXX XXXX XXXX")
+                    tempText = aadhaarRegex.replace(tempText) { mr -> maskAadhaarKeepLast4(mr.value) }
                     for ((token, original) in placeholders) {
                         tempText = tempText.replace(token, original)
                     }
                     maskedText = tempText
                 } else {
-                    maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
+                    maskedText = aadhaarRegex.replace(maskedText) { mr -> maskAadhaarKeepLast4(mr.value) }
                 }
             }
             if (isPan && "PAN" !in excludedTypes) {
@@ -966,7 +984,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         var maskedText = recognizedText
 
         if (isAadhaar && "AADHAAR" !in excludedTypes) {
-            maskedText = maskedText.replace(aadhaarRegex, "XXXX XXXX XXXX")
+            maskedText = aadhaarRegex.replace(maskedText) { mr -> maskAadhaarKeepLast4(mr.value) }
         }
         if (isPan && "PAN" !in excludedTypes) {
             maskedText = maskedText.replace(panRegex, "XXXXXXXXXX")

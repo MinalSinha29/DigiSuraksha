@@ -1,5 +1,5 @@
 # 🛡️ DigiSuraksha (डीजी सुरक्षा)
-> **Zero-Knowledge, On-Device Digital Safety & Privacy Shield for Android**
+> **On-Device Digital Safety & Privacy Shield for Android**
 
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-purple.svg)](https://kotlinlang.org/)
 [![Android](https://img.shields.io/badge/Platform-Android%208.0%2B-green.svg)](https://developer.android.com)
