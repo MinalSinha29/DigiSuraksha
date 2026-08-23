@@ -6,17 +6,29 @@ import androidx.appcompat.app.AppCompatActivity
 
 class LogsActivity : AppCompatActivity() {
 
+    private lateinit var logText: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_logs)
 
-        val logText = findViewById<TextView>(R.id.logText)
+        logText = findViewById(R.id.logText)
+        loadLogs()
+    }
 
-        // 🔥 GET LOGS FROM STORAGE
+    override fun onResume() {
+        super.onResume()
+        loadLogs() // Refresh logs every time user returns to this screen
+    }
+
+    private fun loadLogs() {
         val prefs = getSharedPreferences("logs", MODE_PRIVATE)
-        val logs = prefs.getString("data", "No logs found")
+        val logs = prefs.getString("data", null)
 
-        // 🔥 SHOW LOGS
-        logText.text = logs
+        if (logs.isNullOrBlank()) {
+            logText.text = "No security logs recorded yet.\n\nScreenshots scanned and detected items will appear here."
+        } else {
+            logText.text = logs
+        }
     }
 }

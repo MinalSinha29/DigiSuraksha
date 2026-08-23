@@ -617,6 +617,15 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             startActivityForResult(intent, PICK_IMAGE)
         }
 
+        // 🆕 Phase 2: Opened from a screenshot auto-detect notification?
+        // Load and scan that image automatically instead of requiring the manual picker.
+        val autoDetectedUriString = intent.getStringExtra("EXTRA_IMAGE_URI")
+        val isAutoDetected = intent.getBooleanExtra("EXTRA_AUTO_DETECTED", false)
+        if (isAutoDetected && !autoDetectedUriString.isNullOrBlank()) {
+            logEvent("Screenshot Auto-Detected from Background Notification")
+            loadAndScanImage(Uri.parse(autoDetectedUriString))
+        }
+
         shareButton.setOnClickListener {
             val options = arrayOf(
                 "Share Masked Text",
@@ -697,6 +706,43 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                         }
                     }
                 }.show()
+        }
+    }
+
+    // 🆕 Handle new screenshot notification tap if activity is already open
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val autoDetectedUriString = intent.getStringExtra("EXTRA_IMAGE_URI")
+        val isAutoDetected = intent.getBooleanExtra("EXTRA_AUTO_DETECTED", false)
+        if (isAutoDetected && !autoDetectedUriString.isNullOrBlank()) {
+            logEvent("Screenshot Auto-Detected from Background Notification")
+            loadAndScanImage(Uri.parse(autoDetectedUriString))
+        }
+    }
+
+    // ============================================================
+    // 🆕 Phase 2: Shared image-loading path used by both the manual
+    // picker (onActivityResult) and the auto-detect notification tap.
+    // ============================================================
+    private fun loadAndScanImage(uri: Uri) {
+        try {
+            val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
+            originalBitmap = bitmap
+            latestOcrResult = null
+            latestRecognizedText = null
+            excludedTypes.clear()
+            findingsCheckboxContainer.removeAllViews()
+            imageView.setImageBitmap(bitmap)
+
+            // Run UPI QR detection FIRST (async), then run OCR + analysis
+            detectUpiQrCode(bitmap) { _ ->
+                runOnUiThread {
+                    analyzeImage(bitmap)
+                }
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not load image: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -879,24 +925,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == PICK_IMAGE && resultCode == Activity.RESULT_OK && data != null) {
             val uri: Uri = data.data ?: return
-            try {
-                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
-                originalBitmap = bitmap
-                latestOcrResult = null
-                latestRecognizedText = null
-                excludedTypes.clear()
-                findingsCheckboxContainer.removeAllViews()
-                imageView.setImageBitmap(bitmap)
-
-                // 🆕 Run UPI QR detection FIRST (async), then run OCR + analysis
-                detectUpiQrCode(bitmap) { qrFound ->
-                    runOnUiThread {
-                        analyzeImage(bitmap)
-                    }
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Could not load image: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+            loadAndScanImage(uri)
         }
     }
 
@@ -1359,11 +1388,13 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private fun logEvent(event: String) {
         val prefs  = getSharedPreferences("logs", MODE_PRIVATE)
         val oldLog = prefs.getString("data", "") ?: ""
-        prefs.edit().putString("data", "$oldLog\n${getCurrentTime()} : $event").apply()
+        val newEntry = "${getCurrentTime()} : $event"
+        val updated = if (oldLog.isBlank()) newEntry else "$newEntry\n$oldLog"
+        prefs.edit().putString("data", updated).apply()
     }
 
     private fun getCurrentTime(): String {
-        val sdf = java.text.SimpleDateFormat("HH:mm:ss dd-MM-yyyy", java.util.Locale.getDefault())
+        val sdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault())
         return sdf.format(java.util.Date())
     }
 }
