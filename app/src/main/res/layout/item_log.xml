@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="16dp"
+    android:layout_marginVertical="6dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="1.5dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FFFFFF"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <!-- Header: Badges & Timestamp -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Type Badge (Screenshot / SMS) -->
+            <TextView
+                android:id="@+id/tvTypeBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#EEF2FF"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="📸 SCREENSHOT"
+                android:textColor="#3730A3"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <!-- Risk Level Badge -->
+            <TextView
+                android:id="@+id/tvRiskBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="#FEE2E2"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="HIGH RISK"
+                android:textColor="#991B1B"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <!-- Time -->
+            <TextView
+                android:id="@+id/tvTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="11:33 AM"
+                android:textColor="#9CA3AF"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Screenshot Scanned"
+            android:textColor="#111827"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <!-- Details -->
+        <TextView
+            android:id="@+id/tvDetails"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="High risk sensitive data detected &amp; masked"
+            android:textColor="#4B5563"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+</androidx.cardview.widget.CardView>
