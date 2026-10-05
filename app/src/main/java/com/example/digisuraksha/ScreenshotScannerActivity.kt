@@ -1274,7 +1274,17 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                 )
 
                 if (decision.shouldBlur) {
-                    box?.let { canvas.drawRect(it, paint) }
+                    // 🆕 If Aadhaar is the ONLY reason this line is being blurred, cover just the
+                    // first 8 digits and leave the last 4 visible (matches the masked-text behavior).
+                    // If anything else on the line needs redaction, or the number can't be mapped
+                    // to OCR elements, fall back to blacking out the whole line as before.
+                    val blurTypes = decision.detectedTypes.filter { it == "FRAUD" || it !in excludedTypes }
+                    val onlyAadhaar = blurTypes.isNotEmpty() && blurTypes.all { it == "AADHAAR" }
+                    val handledPartially = onlyAadhaar && drawAadhaarKeepLast4(line, canvas, paint)
+
+                    if (!handledPartially) {
+                        box?.let { canvas.drawRect(it, paint) }
+                    }
                 }
             }
         }
@@ -1299,6 +1309,63 @@ class ScreenshotScannerActivity : AppCompatActivity() {
         )
 
         return blurred
+    }
+
+    // ============================================================
+    // 🆕 AADHAAR IMAGE REDACTION — KEEP LAST 4 DIGITS VISIBLE
+    // Covers only the first 8 digits of each Aadhaar number on the line,
+    // using the OCR element bounding boxes. Returns true if it drew the
+    // partial redaction, false if the caller should black out the whole line.
+    // ============================================================
+    private fun drawAadhaarKeepLast4(
+        line: com.google.mlkit.vision.text.Text.Line,
+        canvas: Canvas,
+        paint: Paint
+    ): Boolean {
+        val lineText = line.text
+        val matches = aadhaarRegex.findAll(lineText).toList()
+        if (matches.isEmpty()) return false
+
+        val elements = line.elements
+        if (elements.isEmpty()) return false
+
+        // Map each OCR element to its character range inside the line text
+        var cursor = 0
+        val spans = mutableListOf<Triple<Int, Int, Rect?>>()
+        for (el in elements) {
+            val idx = lineText.indexOf(el.text, cursor)
+            if (idx < 0) return false
+            spans.add(Triple(idx, idx + el.text.length, el.boundingBox))
+            cursor = idx + el.text.length
+        }
+
+        for (m in matches) {
+            // The match always ends with the last digit, so the final 4 digits
+            // start at (last index - 3). Everything before that gets covered.
+            val coverStart = m.range.first
+            val coverEnd = m.range.last - 3   // exclusive
+            if (coverEnd <= coverStart) return false
+
+            var covered = false
+            for ((s, e, elBox) in spans) {
+                val cs = maxOf(s, coverStart)
+                val ce = minOf(e, coverEnd)
+                if (ce <= cs) continue
+                if (elBox == null) return false
+
+                val len = e - s
+                if (len <= 0) continue
+
+                // Proportional split in case one element holds the whole number
+                val w = elBox.width().toFloat()
+                val left = elBox.left + w * (cs - s) / len
+                val right = elBox.left + w * (ce - s) / len
+                canvas.drawRect(left, elBox.top.toFloat(), right, elBox.bottom.toFloat(), paint)
+                covered = true
+            }
+            if (!covered) return false
+        }
+        return true
     }
 
     // ============================================================
