@@ -39,6 +39,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private var latestOcrResult: com.google.mlkit.vision.text.Text? = null
     private var latestRecognizedText: String? = null
     private var currentRisk: String = "LOW"
+
     // Person 3: stores fields excluded from redaction
     private val excludedTypes = mutableSetOf<String>()
 
@@ -186,30 +187,90 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             Regex("lucky (winner|draw|customer)", RegexOption.IGNORE_CASE),
             Regex("claim (your |the )?(prize|reward|money|amount|cash)", RegexOption.IGNORE_CASE),
             Regex("prize (money|amount|of rs|of ₹)", RegexOption.IGNORE_CASE),
-            Regex("(rs\\.?|₹)\\s*\\d[\\d,]*(\\s*(lakh|crore|thousand|prize|won|reward))", RegexOption.IGNORE_CASE),
+            Regex(
+                "(rs\\.?|₹)\\s*\\d[\\d,]*(\\s*(lakh|crore|thousand|prize|won|reward))",
+                RegexOption.IGNORE_CASE
+            ),
             Regex("send (rs\\.?|₹|money|amount|otp|upi)", RegexOption.IGNORE_CASE),
             Regex("transfer (rs\\.?|₹|money|amount) (to|into)", RegexOption.IGNORE_CASE),
-            Regex("your (account|kyc|sim|number) (will be|is|has been) (blocked|suspended|deactivated|disabled)", RegexOption.IGNORE_CASE),
-            Regex("(kyc|account|sim).{0,30}(expire|block|suspend|deactivat)", RegexOption.IGNORE_CASE),
-            Regex("update (your )?(kyc|aadhaar|pan|account|details) (immediately|now|urgently|today)", RegexOption.IGNORE_CASE),
-            Regex("your (aadhaar|pan|kyc|bank account).{0,30}(link|verify|update).{0,20}(immediately|now|urgent|today|or)", RegexOption.IGNORE_CASE),
-            Regex("(income tax|it department|cbdt).{0,40}(refund|notice|arrest|action)", RegexOption.IGNORE_CASE),
-            Regex("(cci|sebi|rbi|trai|uidai|npci).{0,30}(block|suspend|action|notice|deactivate)", RegexOption.IGNORE_CASE),
-            Regex("(arrested|arrest warrant|fir|cybercrime).{0,30}(your name|against you)", RegexOption.IGNORE_CASE),
-            Regex("click (here|this link|now|below).{0,30}(claim|verify|activate|get)", RegexOption.IGNORE_CASE),
-            Regex("(bit\\.ly|tinyurl|t\\.co|short\\.url|cutt\\.ly|ow\\.ly)/\\S+", RegexOption.IGNORE_CASE),
+            Regex(
+                "your (account|kyc|sim|number) (will be|is|has been) (blocked|suspended|deactivated|disabled)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(kyc|account|sim).{0,30}(expire|block|suspend|deactivat)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "update (your )?(kyc|aadhaar|pan|account|details) (immediately|now|urgently|today)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "your (aadhaar|pan|kyc|bank account).{0,30}(link|verify|update).{0,20}(immediately|now|urgent|today|or)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(income tax|it department|cbdt).{0,40}(refund|notice|arrest|action)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(cci|sebi|rbi|trai|uidai|npci).{0,30}(block|suspend|action|notice|deactivate)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(arrested|arrest warrant|fir|cybercrime).{0,30}(your name|against you)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "click (here|this link|now|below).{0,30}(claim|verify|activate|get)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(bit\\.ly|tinyurl|t\\.co|short\\.url|cutt\\.ly|ow\\.ly)/\\S+",
+                RegexOption.IGNORE_CASE
+            ),
             Regex("work from home.{0,30}(earn|₹|rs|income|daily|weekly)", RegexOption.IGNORE_CASE),
-            Regex("earn (₹|rs\\.?)?\\s*\\d+.{0,20}(per day|daily|per week|weekly|from home)", RegexOption.IGNORE_CASE),
-            Regex("(investment|invest).{0,30}(double|triple|guaranteed|profit|return)", RegexOption.IGNORE_CASE),
+            Regex(
+                "earn (₹|rs\\.?)?\\s*\\d+.{0,20}(per day|daily|per week|weekly|from home)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(investment|invest).{0,30}(double|triple|guaranteed|profit|return)",
+                RegexOption.IGNORE_CASE
+            ),
             Regex("guaranteed (return|profit|income|interest)", RegexOption.IGNORE_CASE),
-            Regex("pay (small|a small|rs|₹).{0,20}(fee|charge|processing|registration).{0,20}(get|receive|claim|collect)", RegexOption.IGNORE_CASE),
-            Regex("refund of (rs\\.?|₹)\\s*\\d+.{0,30}(credited|process|sent|transfer)", RegexOption.IGNORE_CASE),
-            Regex("cashback of (rs\\.?|₹)\\s*\\d+.{0,30}(click|claim|tap|link)", RegexOption.IGNORE_CASE),
-            Regex("your (electricity|power|gas|water).{0,30}(cut|disconnect|suspend).{0,30}(pay|payment|immediately)", RegexOption.IGNORE_CASE),
-            Regex("(sbi|hdfc|icici|axis|kotak|pnb|bob).{0,30}(block|suspend|deactivat|alert|urgent)", RegexOption.IGNORE_CASE),
-            Regex("(dear|hi|hello).{0,20}(customer|user|sir|madam).{0,40}(won|prize|reward|lucky|selected)", RegexOption.IGNORE_CASE),
-            Regex("(rupees|rs|₹).{0,10}\\d[\\d,]+.{0,20}(won|prize|reward|gift|waiting)", RegexOption.IGNORE_CASE),
-            Regex("scan (this |the )?(qr|code).{0,30}(get|receive|claim|collect|pay)", RegexOption.IGNORE_CASE)
+            Regex(
+                "pay (small|a small|rs|₹).{0,20}(fee|charge|processing|registration).{0,20}(get|receive|claim|collect)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "refund of (rs\\.?|₹)\\s*\\d+.{0,30}(credited|process|sent|transfer)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "cashback of (rs\\.?|₹)\\s*\\d+.{0,30}(click|claim|tap|link)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "your (electricity|power|gas|water).{0,30}(cut|disconnect|suspend).{0,30}(pay|payment|immediately)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(sbi|hdfc|icici|axis|kotak|pnb|bob).{0,30}(block|suspend|deactivat|alert|urgent)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(dear|hi|hello).{0,20}(customer|user|sir|madam).{0,40}(won|prize|reward|lucky|selected)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(rupees|rs|₹).{0,10}\\d[\\d,]+.{0,20}(won|prize|reward|gift|waiting)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "scan (this |the )?(qr|code).{0,30}(get|receive|claim|collect|pay)",
+                RegexOption.IGNORE_CASE
+            )
         )
 
         internal val fraudMediumSignals = listOf(
@@ -218,11 +279,20 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             Regex("limited (time|offer|period)", RegexOption.IGNORE_CASE),
             Regex("act (now|fast|immediately|today)", RegexOption.IGNORE_CASE),
             Regex("free (gift|offer|reward|recharge|data)", RegexOption.IGNORE_CASE),
-            Regex("(selected|chosen|eligible).{0,30}(you|your number|your account)", RegexOption.IGNORE_CASE),
+            Regex(
+                "(selected|chosen|eligible).{0,30}(you|your number|your account)",
+                RegexOption.IGNORE_CASE
+            ),
             Regex("(lottery|lucky draw|bumper prize|mega prize)", RegexOption.IGNORE_CASE),
             Regex("(customer care|helpline).{0,20}(\\d{10}|\\+91)", RegexOption.IGNORE_CASE),
-            Regex("(whatsapp|telegram|call).{0,20}(us|now|immediately|for details)", RegexOption.IGNORE_CASE),
-            Regex("(google pay|phonepe|paytm|bhim).{0,30}(send|transfer|pay|receive)", RegexOption.IGNORE_CASE)
+            Regex(
+                "(whatsapp|telegram|call).{0,20}(us|now|immediately|for details)",
+                RegexOption.IGNORE_CASE
+            ),
+            Regex(
+                "(google pay|phonepe|paytm|bhim).{0,30}(send|transfer|pay|receive)",
+                RegexOption.IGNORE_CASE
+            )
         )
 
         // ============================================================
@@ -336,13 +406,15 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                         placeholders.add(token to match)
                         tempText = tempText.replaceFirst(match, token)
                     }
-                    tempText = aadhaarRegex.replace(tempText) { mr -> maskAadhaarKeepLast4(mr.value) }
+                    tempText =
+                        aadhaarRegex.replace(tempText) { mr -> maskAadhaarKeepLast4(mr.value) }
                     for ((token, original) in placeholders) {
                         tempText = tempText.replace(token, original)
                     }
                     maskedText = tempText
                 } else {
-                    maskedText = aadhaarRegex.replace(maskedText) { mr -> maskAadhaarKeepLast4(mr.value) }
+                    maskedText =
+                        aadhaarRegex.replace(maskedText) { mr -> maskAadhaarKeepLast4(mr.value) }
                 }
             }
             if (isPan && "PAN" !in excludedTypes) {
@@ -408,14 +480,19 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             val blurringReasons = mutableListOf<String>()
 
             // 1. Identify sensitive types present on this line
-            val hasAadhaar = detectAadhaar(line, lower) || (context != null && detectAadhaar(line, context.lowercase()))
+            val hasAadhaar = detectAadhaar(line, lower) || (context != null && detectAadhaar(
+                line,
+                context.lowercase()
+            ))
             if (hasAadhaar) detected.add("AADHAAR")
 
             val hasPan = panRegex.containsMatchIn(line)
             if (hasPan) detected.add("PAN")
 
             val hasCard = cardRegex.containsMatchIn(line) &&
-                    (cardKeywords.any { lower.contains(it) } || (context != null && cardKeywords.any { context.lowercase().contains(it) }))
+                    (cardKeywords.any { lower.contains(it) } || (context != null && cardKeywords.any {
+                        context.lowercase().contains(it)
+                    }))
             if (hasCard) detected.add("CARD")
 
             val hasUpi = upiRegex.containsMatchIn(line)
@@ -442,13 +519,23 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             val hasIp = ipRegex.containsMatchIn(line)
             if (hasIp) detected.add("IP")
 
-            val hasOtp = detectOtp(line, lower) || (context != null && detectOtp(context, context.lowercase()) &&
-                    (otpKeywords.any { lower.contains(it) } || Regex("\\b\\d{4,8}\\b").containsMatchIn(line)))
+            val hasOtp = detectOtp(line, lower) || (context != null && detectOtp(
+                context,
+                context.lowercase()
+            ) &&
+                    (otpKeywords.any { lower.contains(it) } || Regex("\\b\\d{4,8}\\b").containsMatchIn(
+                        line
+                    )))
             if (hasOtp) detected.add("OTP")
 
-            val hasAddress = (addressKeywordRegex.containsMatchIn(line) && pincodeRegex.containsMatchIn(line)) ||
-                    (context != null && addressKeywordRegex.containsMatchIn(context) && pincodeRegex.containsMatchIn(context) &&
-                            (addressKeywordRegex.containsMatchIn(line) || pincodeRegex.containsMatchIn(line)))
+            val hasAddress =
+                (addressKeywordRegex.containsMatchIn(line) && pincodeRegex.containsMatchIn(line)) ||
+                        (context != null && addressKeywordRegex.containsMatchIn(context) && pincodeRegex.containsMatchIn(
+                            context
+                        ) &&
+                                (addressKeywordRegex.containsMatchIn(line) || pincodeRegex.containsMatchIn(
+                                    line
+                                )))
             if (hasAddress) detected.add("ADDRESS")
 
             val hasFraud = fraudHighPhrases.any { it.containsMatchIn(line) }
@@ -534,12 +621,39 @@ class ScreenshotScannerActivity : AppCompatActivity() {
 
             // UPI deep-link: upi://pay?pa=...
             if (lower.startsWith("upi://")) {
-                val pa = Regex("[?&]pa=([^&]+)", RegexOption.IGNORE_CASE).find(rawValue)?.groupValues?.get(1)
-                    ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } }
-                val pn = Regex("[?&]pn=([^&]+)", RegexOption.IGNORE_CASE).find(rawValue)?.groupValues?.get(1)
-                    ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } }
-                val am = Regex("[?&]am=([^&]+)", RegexOption.IGNORE_CASE).find(rawValue)?.groupValues?.get(1)
-                    ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it } }
+                val pa = Regex(
+                    "[?&]pa=([^&]+)",
+                    RegexOption.IGNORE_CASE
+                ).find(rawValue)?.groupValues?.get(1)
+                    ?.let {
+                        try {
+                            java.net.URLDecoder.decode(it, "UTF-8")
+                        } catch (e: Exception) {
+                            it
+                        }
+                    }
+                val pn = Regex(
+                    "[?&]pn=([^&]+)",
+                    RegexOption.IGNORE_CASE
+                ).find(rawValue)?.groupValues?.get(1)
+                    ?.let {
+                        try {
+                            java.net.URLDecoder.decode(it, "UTF-8")
+                        } catch (e: Exception) {
+                            it
+                        }
+                    }
+                val am = Regex(
+                    "[?&]am=([^&]+)",
+                    RegexOption.IGNORE_CASE
+                ).find(rawValue)?.groupValues?.get(1)
+                    ?.let {
+                        try {
+                            java.net.URLDecoder.decode(it, "UTF-8")
+                        } catch (e: Exception) {
+                            it
+                        }
+                    }
 
                 val payee = pn ?: pa
                 return UpiQrParseResult(
@@ -600,6 +714,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     private var detectedUpiQrPayee: String? = null   // payee name from QR if found
     private var detectedUpiQrAmount: String? = null  // pre-set amount from QR if found
     private var isUpiQrDetected = false
+
     // 🔧 FIX: store the QR code's on-image position so it can actually be blurred
     private var detectedUpiQrBoundingBox: Rect? = null
 
@@ -831,6 +946,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                 logEvent("Screenshot → LOW → Shared (Original)")
                 doShareOriginal(bitmap)
             }
+
             "MEDIUM" -> {
                 AlertDialog.Builder(this)
                     .setTitle("⚠ Heads Up!")
@@ -846,6 +962,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     .setNegativeButton("Cancel", null)
                     .show()
             }
+
             "HIGH" -> {
                 // Build a context-aware warning message
                 val warningDetails = buildString {
@@ -882,6 +999,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             }
         }
     }
+
     private fun doShareOriginal(bitmap: Bitmap) {
 
         try {
@@ -1201,6 +1319,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     }
                 }
             }
+
             "MEDIUM" -> {
                 fraudWarning.text = "⚠ MEDIUM RISK: ${findings.joinToString(", ")}"
 
@@ -1223,6 +1342,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     }
                 }
             }
+
             else -> {
                 fraudWarning.text =
                     if (findings.isEmpty()) "✓ No sensitive data detected"
@@ -1262,11 +1382,13 @@ class ScreenshotScannerActivity : AppCompatActivity() {
             val blockContext = block.text
             for (line in block.lines) {
                 val box = line.boundingBox
-                val boxStr = box?.let { "(${it.left},${it.top},${it.right},${it.bottom})" } ?: "(null)"
+                val boxStr =
+                    box?.let { "(${it.left},${it.top},${it.right},${it.bottom})" } ?: "(null)"
                 val decision = evaluateLineRedaction(line.text, excludedTypes, blockContext)
 
                 val decisionStr = if (decision.shouldBlur) "BLUR" else "SKIP"
-                val typeStr = if (decision.detectedTypes.isNotEmpty()) decision.detectedTypes.joinToString(",") else "NONE"
+                val typeStr =
+                    if (decision.detectedTypes.isNotEmpty()) decision.detectedTypes.joinToString(",") else "NONE"
 
                 android.util.Log.i(
                     "DigiSuraksha_Redaction",
@@ -1278,7 +1400,8 @@ class ScreenshotScannerActivity : AppCompatActivity() {
                     // first 8 digits and leave the last 4 visible (matches the masked-text behavior).
                     // If anything else on the line needs redaction, or the number can't be mapped
                     // to OCR elements, fall back to blacking out the whole line as before.
-                    val blurTypes = decision.detectedTypes.filter { it == "FRAUD" || it !in excludedTypes }
+                    val blurTypes =
+                        decision.detectedTypes.filter { it == "FRAUD" || it !in excludedTypes }
                     val onlyAadhaar = blurTypes.isNotEmpty() && blurTypes.all { it == "AADHAAR" }
                     val handledPartially = onlyAadhaar && drawAadhaarKeepLast4(line, canvas, paint)
 
@@ -1471,7 +1594,7 @@ class ScreenshotScannerActivity : AppCompatActivity() {
     }
 
     private fun logEvent(event: String) {
-        val prefs  = getSharedPreferences("logs", MODE_PRIVATE)
+        val prefs = getSharedPreferences("logs", MODE_PRIVATE)
         val oldLog = prefs.getString("data", "") ?: ""
         val newEntry = "${getCurrentTime()} : $event"
         val updated = if (oldLog.isBlank()) newEntry else "$newEntry\n$oldLog"
